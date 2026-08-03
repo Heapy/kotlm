@@ -1,0 +1,37 @@
+product: jvm/app
+
+layout: maven-like
+
+dependencies:
+  - $libs.ktor.server.cio
+  - $libs.ktor.server.contentNegotiation
+  - $libs.ktor.server.statusPages
+  - $libs.ktor.server.callId
+  - $libs.ktor.server.metrics.micrometer
+  - $libs.ktor.serialization.kotlinx.json
+  - $libs.ktor.client.cio
+  - $libs.ktor.client.contentNegotiation
+  - $libs.kotlinx.serialization.json
+  - $libs.kotlinx.coroutines.core
+  - $libs.micrometer.registry.prometheus
+  - $libs.logback.classic
+
+test-dependencies:
+  - $libs.ktor.server.testHost
+  - $libs.ktor.client.mock
+  - $libs.junit.jupiter
+
+settings:
+  kotlin:
+    version: 2.4.10
+    serialization:
+      enabled: true
+      version: 1.11.0
+  jvm:
+    mainClass: io.heapy.kotlm.Application
+    jdk:
+      version: 25
+      distributions: [liberica]
+    release: 25
+    test:
+      junitPlatformVersion: 6.1.0

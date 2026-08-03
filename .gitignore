@@ -1,0 +1,16 @@
+# System
+.DS_Store
+
+# Ignore Idea project-specific configuration files
+.idea
+
+# Ignore Kotlin Toolchain build output
+build
+
+# Kotlin compiler errors
+.kotlin
+
+# Local configuration and state
+.env
+.data
+secrets/

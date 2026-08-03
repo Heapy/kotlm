@@ -1,0 +1,10 @@
+build
+.git
+.github
+.idea
+.kotlin
+.env
+.data
+secrets
+docs
+*.md
