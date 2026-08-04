@@ -50,7 +50,6 @@ private fun requireTextOnly(element: JsonElement) {
 fun normalizeResponsesPayload(
     payload: JsonObject,
     allowedModels: List<String>,
-    maxOutputTokens: Int,
 ): JsonObject {
     val model = payload.string("model")
         ?: throw RequestException("model is required")
@@ -70,7 +69,6 @@ fun normalizeResponsesPayload(
 
     val requested = payload.int("max_output_tokens")
     if (requested != null && requested <= 0) throw RequestException("max_output_tokens must be a positive integer")
-    val bounded = minOf(requested ?: maxOutputTokens, maxOutputTokens)
 
     val include = buildJsonArray {
         payload.array("include").orEmpty().forEach(::add)
@@ -80,9 +78,11 @@ fun normalizeResponsesPayload(
     }
 
     return payload
-        .without("stream")
+        // max_output_tokens is valid in the OpenAI contract, but the Codex subscription
+        // responds with "Unsupported parameter", so it is not sent upstream.
+        .without("stream", "max_output_tokens")
         .with(
-            "max_output_tokens" to JsonPrimitive(bounded),
+            "input" to normalizeInput(input),
             "store" to JsonPrimitive(false),
             "include" to include,
             "reasoning" to (
@@ -92,6 +92,22 @@ fun normalizeResponsesPayload(
                 }
                 ),
         )
+}
+
+/**
+ * OpenAI accepts a plain string in input, but Codex responds with "Input must be a list".
+ * Wrap it here so clients do not need to know this provider-specific behavior.
+ */
+private fun normalizeInput(input: JsonElement): JsonElement = when (input) {
+    is JsonPrimitive -> buildJsonArray {
+        add(
+            buildJsonObject {
+                put("role", "user")
+                put("content", input.content)
+            },
+        )
+    }
+    else -> input
 }
 
 /**
@@ -125,8 +141,6 @@ fun chatToResponsesPayload(body: JsonObject): JsonObject {
         put("model", model)
         put("instructions", instructions.joinToString("\n"))
         put("input", JsonArray(input))
-        body.int("max_completion_tokens")?.let { put("max_output_tokens", it) }
-            ?: body.int("max_tokens")?.let { put("max_output_tokens", it) }
         body.string("reasoning_effort")?.let {
             put("reasoning", buildJsonObject { put("effort", it); put("summary", "auto") })
         }

@@ -41,7 +41,11 @@ class CodexUpstream(
         consumer: suspend (HttpResponse) -> T,
     ): T {
         val credentials = tokenManager.credentials(forceRefresh = forceRefresh)
-        val body = payload.with("stream" to JsonPrimitive(true))
+        val body = payload.with(
+            "stream" to JsonPrimitive(true),
+            // The subscription caches the shared request prefix under this key.
+            "prompt_cache_key" to JsonPrimitive(requestId),
+        )
 
         return httpClient.preparePost("${credentials.baseUrl}/responses") {
             contentType(ContentType.Application.Json)

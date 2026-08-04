@@ -36,7 +36,6 @@ data class KotlmConfig(
     val clients: List<ClientConfig>,
     val adminKey: String?,
     val allowedModels: List<String>,
-    val maxOutputTokens: Int,
     val upstreamTimeoutSeconds: Long,
 ) {
     val clientsByKey: Map<String, ClientConfig> = clients.associateBy(ClientConfig::key)
@@ -96,11 +95,10 @@ fun loadConfig(): KotlmConfig {
         usageFile = env("KOTLM_USAGE_FILE")?.let(::Path) ?: stateDirectory.resolve("usage.json"),
         clients = readClients(),
         adminKey = env("KOTLM_ADMIN_KEY"),
-        allowedModels = (env("KOTLM_ALLOWED_MODELS") ?: "gpt-5.6")
+        allowedModels = (env("KOTLM_ALLOWED_MODELS") ?: "gpt-5.6-sol")
             .split(",")
             .map(String::trim)
             .filter(String::isNotEmpty),
-        maxOutputTokens = intEnv("KOTLM_MAX_OUTPUT_TOKENS", 32_000, 256, 200_000),
         upstreamTimeoutSeconds = intEnv("KOTLM_UPSTREAM_TIMEOUT_SECONDS", 180, 5, 900).toLong(),
     )
 }

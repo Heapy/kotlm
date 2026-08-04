@@ -31,6 +31,7 @@ import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.add
 import kotlinx.serialization.json.put
+import java.io.IOException
 import java.security.MessageDigest
 import java.util.UUID
 
@@ -198,7 +199,7 @@ fun Application.configureRouting(module: ApplicationModule) = routing {
         post("/responses") {
             val client = call.admitted(module, "responses") ?: return@post
             val body = call.receiveJsonObject()
-            val payload = normalizeResponsesPayload(body, module.config.allowedModels, module.config.maxOutputTokens)
+            val payload = normalizeResponsesPayload(body, module.config.allowedModels)
             val streaming = body.boolean("stream") == true
             val requestId = call.request.headers["X-Request-Id"] ?: UUID.randomUUID().toString()
 
@@ -242,11 +243,7 @@ fun Application.configureRouting(module: ApplicationModule) = routing {
         post("/chat/completions") {
             val client = call.admitted(module, "chat") ?: return@post
             val body = call.receiveJsonObject()
-            val payload = normalizeResponsesPayload(
-                chatToResponsesPayload(body),
-                module.config.allowedModels,
-                module.config.maxOutputTokens,
-            )
+            val payload = normalizeResponsesPayload(chatToResponsesPayload(body), module.config.allowedModels)
             val requestId = call.request.headers["X-Request-Id"] ?: UUID.randomUUID().toString()
 
             module.upstream.stream(payload, requestId) { response ->
@@ -348,5 +345,8 @@ fun statusOf(error: Throwable): Pair<HttpStatusCode, String> = when (error) {
         else -> HttpStatusCode.ServiceUnavailable
     } to error.code
     is UpstreamProtocolException -> HttpStatusCode.BadGateway to "invalid_upstream_response"
+    // A missing provider response or dropped connection indicates upstream unavailability,
+    // not an internal proxy error.
+    is IOException -> HttpStatusCode.ServiceUnavailable to "upstream_unavailable"
     else -> HttpStatusCode.InternalServerError to "internal_error"
 }

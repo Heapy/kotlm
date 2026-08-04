@@ -67,7 +67,11 @@ The proxy applies these changes to every request:
 - `store` is always `false`, so conversations are not retained by the provider;
 - `max_output_tokens` is capped by `KOTLM_MAX_OUTPUT_TOKENS`;
 - provider tools (`tools`), references to previous responses (`previous_response_id`, `conversation`, `prompt`), and non-text input are rejected because their token cost cannot be determined from the request body;
-- models outside `KOTLM_ALLOWED_MODELS` are rejected so a typo cannot consume the subscription.
+- models outside `KOTLM_ALLOWED_MODELS` are rejected so a typo cannot consume the subscription;
+- a string in `input` is wrapped in a list because the OpenAI contract permits a string while Codex responds with `Input must be a list`;
+- `max_output_tokens` **is not sent to the provider** because the subscription responds with `Unsupported parameter`. The value is checked for validity and then discarded, so this parameter cannot limit response length.
+
+The model available to a ChatGPT account is `gpt-5.6-sol`. Names such as `gpt-5.6`, `gpt-5-codex`, and `gpt-5.6-codex` are rejected by the subscription with `model is not supported when using Codex with a ChatGPT account`.
 
 `stream: true` is supported, but events are returned together at the end rather than as they are generated. This is due to Ktor writing a streaming response body lazily, after the provider connection has already closed, so the stream is read in full during the request. The event format remains genuine SSE and client SDKs parse it normally.
 
@@ -98,8 +102,7 @@ Both limits are checked before the subscription is contacted.
 | `KOTLM_AUTH_FILE` | `/run/secrets/codex_auth` | Read-only secret file containing tokens |
 | `KOTLM_STATE_DIR` | `/var/lib/kotlm` | Directory for `auth.json` and `usage.json`; **must be writable** |
 | `KOTLM_STATE_FILE`, `KOTLM_USAGE_FILE` | Derived from `STATE_DIR` | Exact paths when the state directory is unsuitable |
-| `KOTLM_ALLOWED_MODELS` | `gpt-5.6` | Comma-separated list of models |
-| `KOTLM_MAX_OUTPUT_TOKENS` | `32000` | Per-request output ceiling |
+| `KOTLM_ALLOWED_MODELS` | `gpt-5.6-sol` | Comma-separated list of models |
 | `KOTLM_UPSTREAM_TIMEOUT_SECONDS` | `180` | Provider request timeout |
 
 ## Metrics

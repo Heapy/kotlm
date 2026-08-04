@@ -64,7 +64,7 @@ fun writeAuthFile(directory: Path, accessToken: String = testAccessToken(), refr
 fun testConfig(
     directory: Path,
     clients: List<ClientConfig> = listOf(ClientConfig(name = "sql-nastya", key = "client-key-0123456789")),
-    allowedModels: List<String> = listOf("gpt-5.6"),
+    allowedModels: List<String> = listOf("gpt-5.6-sol"),
     adminKey: String? = "admin-key-0123456789",
 ): KotlmConfig = KotlmConfig(
     host = "127.0.0.1",
@@ -75,7 +75,6 @@ fun testConfig(
     clients = clients,
     adminKey = adminKey,
     allowedModels = allowedModels,
-    maxOutputTokens = 4_000,
     upstreamTimeoutSeconds = 30,
 )
 
@@ -84,7 +83,7 @@ fun sseResponse(
     text: String = "Done",
     inputTokens: Int = 11,
     outputTokens: Int = 7,
-    model: String = "gpt-5.6",
+    model: String = "gpt-5.6-sol",
 ): String {
     val response = buildJsonObject {
         put("id", "resp_1")

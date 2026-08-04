@@ -62,7 +62,7 @@ class ProxyTest {
     private suspend fun ApplicationTestBuilder.ask(
         key: String? = CLIENT_KEY,
         path: String = "/v1/responses",
-        body: String = """{"model":"gpt-5.6","input":"hello"}""",
+        body: String = """{"model":"gpt-5.6-sol","input":"hello"}""",
     ): HttpResponse = client.post(path) {
         key?.let { header(HttpHeaders.Authorization, "Bearer $it") }
         contentType(ContentType.Application.Json)
@@ -100,7 +100,7 @@ class ProxyTest {
         val appModule = applicationModule()
         application { module(appModule) }
 
-        val response = ask(body = """{"model":"gpt-5.6","input":"hello","stream":true}""")
+        val response = ask(body = """{"model":"gpt-5.6-sol","input":"hello","stream":true}""")
         assertEquals(HttpStatusCode.OK, response.status)
         assertEquals(ContentType.Text.EventStream.contentType, response.contentType()?.contentType)
         val text = response.bodyAsText()
@@ -147,7 +147,7 @@ class ProxyTest {
 
         val response = ask(
             path = "/v1/chat/completions",
-            body = """{"model":"gpt-5.6","messages":[{"role":"user","content":"hello"}]}""",
+            body = """{"model":"gpt-5.6-sol","messages":[{"role":"user","content":"hello"}]}""",
         )
         assertEquals(HttpStatusCode.OK, response.status)
         val body = json.parseToJsonElement(response.bodyAsText()) as JsonObject
@@ -217,7 +217,7 @@ class ProxyTest {
 
         val response = client.get("/v1/models") { header(HttpHeaders.Authorization, "Bearer $CLIENT_KEY") }
         assertEquals(HttpStatusCode.OK, response.status)
-        assertContains(response.bodyAsText(), "gpt-5.6")
+        assertContains(response.bodyAsText(), "gpt-5.6-sol")
     }
 
     @Test
