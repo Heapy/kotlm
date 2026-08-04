@@ -65,7 +65,6 @@ Requests are authorized with the `Authorization: Bearer <project key>` header.
 The proxy applies these changes to every request:
 
 - `store` is always `false`, so conversations are not retained by the provider;
-- `max_output_tokens` is capped by `KOTLM_MAX_OUTPUT_TOKENS`;
 - provider tools (`tools`), references to previous responses (`previous_response_id`, `conversation`, `prompt`), and non-text input are rejected because their token cost cannot be determined from the request body;
 - models outside `KOTLM_ALLOWED_MODELS` are rejected so a typo cannot consume the subscription;
 - a string in `input` is wrapped in a list because the OpenAI contract permits a string while Codex responds with `Input must be a list`;
