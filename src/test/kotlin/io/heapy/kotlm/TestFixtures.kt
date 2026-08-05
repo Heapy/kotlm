@@ -64,7 +64,7 @@ fun writeAuthFile(directory: Path, accessToken: String = testAccessToken(), refr
 fun testConfig(
     directory: Path,
     clients: List<ClientConfig> = listOf(ClientConfig(name = "sql-nastya", key = "client-key-0123456789")),
-    allowedModels: List<String> = listOf("gpt-5.6-sol"),
+    allowedModels: List<String> = DEFAULT_ALLOWED_MODELS,
     adminKey: String? = "admin-key-0123456789",
     maxRequestBytes: Int = 1_048_576,
 ): KotlmConfig = KotlmConfig(

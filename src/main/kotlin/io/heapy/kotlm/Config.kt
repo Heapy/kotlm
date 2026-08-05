@@ -46,6 +46,21 @@ class ConfigurationException(message: String) : RuntimeException(message)
 
 private fun env(name: String): String? = System.getenv(name)?.trim()?.takeIf(String::isNotEmpty)
 
+internal val DEFAULT_ALLOWED_MODELS = listOf(
+    "gpt-5.6-sol",
+    "gpt-5.6-terra",
+    "gpt-5.6-luna",
+    "gpt-5.5",
+    "gpt-5.3-codex-spark",
+)
+
+private fun readAllowedModels(): List<String> =
+    env("KOTLM_ALLOWED_MODELS")
+        ?.split(",")
+        ?.map(String::trim)
+        ?.filter(String::isNotEmpty)
+        ?: DEFAULT_ALLOWED_MODELS
+
 private fun intEnv(name: String, fallback: Int, minimum: Int, maximum: Int): Int {
     val raw = env(name) ?: return fallback
     val value = raw.toIntOrNull()
@@ -112,10 +127,7 @@ fun loadConfig(): KotlmConfig {
         usageFile = env("KOTLM_USAGE_FILE")?.let(::Path) ?: stateDirectory.resolve("usage.json"),
         clients = readClients(),
         adminKey = env("KOTLM_ADMIN_KEY"),
-        allowedModels = (env("KOTLM_ALLOWED_MODELS") ?: "gpt-5.6-sol")
-            .split(",")
-            .map(String::trim)
-            .filter(String::isNotEmpty),
+        allowedModels = readAllowedModels(),
         upstreamTimeoutSeconds = intEnv("KOTLM_UPSTREAM_TIMEOUT_SECONDS", 180, 5, 900).toLong(),
         maxRequestBytes = intEnv("KOTLM_MAX_REQUEST_BYTES", 1_048_576, 1_024, 8_388_608),
     )

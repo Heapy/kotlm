@@ -76,7 +76,13 @@ The proxy applies these changes to every request:
 - a string in `input` is wrapped in a list because the OpenAI contract permits a string while Codex responds with `Input must be a list`;
 - `max_output_tokens` **is not sent to the provider** because the subscription responds with `Unsupported parameter`. The value is checked for validity and then discarded, so this parameter cannot limit response length.
 
-The model available to a ChatGPT account is `gpt-5.6-sol`. Names such as `gpt-5.6`, `gpt-5-codex`, and `gpt-5.6-codex` are rejected by the subscription with `model is not supported when using Codex with a ChatGPT account`.
+The default allowlist contains the ChatGPT Pro models that are not scheduled for retirement:
+
+- `gpt-5.6-sol`, `gpt-5.6-terra`, and `gpt-5.6-luna`;
+- `gpt-5.5`;
+- `gpt-5.3-codex-spark`, a text-only research preview available to ChatGPT Pro users.
+
+The `gpt-5.6` selector shown in Codex CLI examples is not a separate model in the current catalog, so the proxy uses the explicit `sol`, `terra`, and `luna` slugs. Override `KOTLM_ALLOWED_MODELS` when the subscription catalog changes.
 
 `stream: true` is supported, but events are returned together at the end rather than as they are generated. Responses clients receive provider Responses events; Chat Completions clients receive OpenAI-compatible `chat.completion.chunk` events followed by `data: [DONE]`. `stream_options.include_usage` adds the standard final usage chunk with an empty `choices` array.
 
@@ -110,7 +116,7 @@ State writes use an atomic replacement when the filesystem supports it and fall 
 | `KOTLM_AUTH_FILE` | `/run/secrets/codex_auth` | Read-only secret file containing tokens |
 | `KOTLM_STATE_DIR` | `/var/lib/kotlm` | Directory for `auth.json` and `usage.json`; **must be writable** |
 | `KOTLM_STATE_FILE`, `KOTLM_USAGE_FILE` | Derived from `STATE_DIR` | Exact paths when the state directory is unsuitable |
-| `KOTLM_ALLOWED_MODELS` | `gpt-5.6-sol` | Comma-separated list of models |
+| `KOTLM_ALLOWED_MODELS` | Current non-retiring ChatGPT Pro models listed above | Comma-separated list of models |
 | `KOTLM_UPSTREAM_TIMEOUT_SECONDS` | `180` | Provider request timeout |
 | `KOTLM_MAX_REQUEST_BYTES` | `1048576` | Maximum UTF-8 JSON body size in bytes; accepted range is 1 KiB through 8 MiB |
 

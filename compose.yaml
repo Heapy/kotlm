@@ -8,7 +8,7 @@ services:
       KOTLM_ADMIN_KEY: "${KOTLM_ADMIN_KEY:?set KOTLM_ADMIN_KEY in .env}"
       KOTLM_AUTH_FILE: /run/kotlm-secrets/codex_auth.json
       KOTLM_STATE_DIR: /var/lib/kotlm
-      KOTLM_ALLOWED_MODELS: "${KOTLM_ALLOWED_MODELS:-gpt-5.6-sol}"
+      KOTLM_ALLOWED_MODELS: "${KOTLM_ALLOWED_MODELS:-gpt-5.6-sol,gpt-5.6-terra,gpt-5.6-luna,gpt-5.5,gpt-5.3-codex-spark}"
     volumes:
       # The directory is mounted instead of individual Docker secrets so the
       # optional auth bootstrap file may be absent during device-code login.

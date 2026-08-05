@@ -334,9 +334,9 @@ class ProxyTest {
         val response = client.get("/v1/models") { header(HttpHeaders.Authorization, "Bearer $CLIENT_KEY") }
         assertEquals(HttpStatusCode.OK, response.status)
         val body = json.parseToJsonElement(response.bodyAsText()) as JsonObject
-        val model = body.array("data").orEmpty().filterIsInstance<JsonObject>().single()
-        assertEquals("gpt-5.6-sol", model.string("id"))
-        assertEquals(0, model.long("created"))
+        val models = body.array("data").orEmpty().filterIsInstance<JsonObject>()
+        assertEquals(DEFAULT_ALLOWED_MODELS, models.mapNotNull { it.string("id") })
+        assertTrue(models.all { it.long("created") == 0L })
     }
 
     @Test
