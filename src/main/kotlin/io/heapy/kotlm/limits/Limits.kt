@@ -1,6 +1,7 @@
 package io.heapy.kotlm.limits
 
 import io.heapy.kotlm.json
+import io.heapy.kotlm.replaceStateFile
 import io.heapy.kotlm.string
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -9,16 +10,20 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
-import java.nio.file.Files
 import java.nio.file.Path
-import java.nio.file.StandardCopyOption
+import org.slf4j.LoggerFactory
 import java.time.Instant
 import java.time.ZoneOffset
 import kotlin.io.path.exists
 import kotlin.io.path.readText
-import kotlin.io.path.writeText
+
+private val log = LoggerFactory.getLogger(UsageStore::class.java)
 
 data class RateVerdict(val allowed: Boolean, val retryAfterSeconds: Int)
+
+class UsageStateException(message: String, cause: Throwable? = null) : RuntimeException(message, cause)
+
+data class UsageStatus(val available: Boolean, val error: String? = null)
 
 /**
  * Per-client sliding window kept in memory. It starts fresh after a restart, an acceptable
@@ -55,22 +60,50 @@ class RateLimiter(
 class UsageStore(
     private val file: Path,
     private val today: () -> String = { Instant.now().atZone(ZoneOffset.UTC).toLocalDate().toString() },
+    private val onPersistenceFailure: (Throwable) -> Unit = {},
 ) {
     private val mutex = Mutex()
     private var day: String = today()
     private val totals = mutableMapOf<String, Long>()
     private var loaded = false
+    private var dirty = false
+    private var lastError: Throwable? = null
 
     private fun load() {
         if (loaded) return
-        loaded = true
-        if (!file.exists()) return
-        val document = runCatching { json.parseToJsonElement(file.readText()) as JsonObject }.getOrNull() ?: return
-        val storedDay = document.string("day") ?: return
-        if (storedDay != today()) return
-        day = storedDay
-        (document["totals"] as? JsonObject)?.forEach { (client, value) ->
-            (value as? JsonPrimitive)?.longOrNull?.let { totals[client] = it }
+        if (!file.exists()) {
+            loaded = true
+            clearFailure()
+            return
+        }
+
+        try {
+            val document = json.parseToJsonElement(file.readText()) as? JsonObject
+                ?: throw IllegalArgumentException("Usage state is not a JSON object")
+            val storedDay = document.string("day")
+                ?: throw IllegalArgumentException("Usage state has no day")
+            val storedTotals = document["totals"] as? JsonObject
+                ?: throw IllegalArgumentException("Usage state has no totals object")
+            val parsedTotals = storedTotals.mapValues { (client, value) ->
+                val total = (value as? JsonPrimitive)?.longOrNull
+                    ?: throw IllegalArgumentException("Usage total of $client is not an integer")
+                if (total < 0) throw IllegalArgumentException("Usage total of $client is negative")
+                total
+            }
+
+            val currentDay = today()
+            day = currentDay
+            totals.clear()
+            if (storedDay == currentDay) {
+                totals.putAll(parsedTotals)
+            } else {
+                dirty = true
+            }
+            loaded = true
+            clearFailure()
+        } catch (error: Exception) {
+            markFailure(error)
+            throw UsageStateException("Usage state is unavailable", error)
         }
     }
 
@@ -79,20 +112,45 @@ class UsageStore(
         if (current != day) {
             day = current
             totals.clear()
+            dirty = true
         }
     }
 
-    private fun persist() {
+    private fun persist(): Boolean {
         val document = buildJsonObject {
             put("day", day)
             put("totals", buildJsonObject { totals.forEach { (client, value) -> put(client, value) } })
         }
-        runCatching {
-            file.parent?.let { Files.createDirectories(it) }
-            val temporary = file.resolveSibling("${file.fileName}.tmp")
-            temporary.writeText(json.encodeToString(JsonObject.serializer(), document))
-            Files.move(temporary, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
+
+        return try {
+            replaceStateFile(file, json.encodeToString(JsonObject.serializer(), document))
+            dirty = false
+            clearFailure()
+            true
+        } catch (error: Exception) {
+            dirty = true
+            markFailure(error)
+            false
         }
+    }
+
+    private fun ensureDurable() {
+        if (dirty && !persist()) {
+            throw UsageStateException("Usage state is unavailable", lastError)
+        }
+    }
+
+    private fun markFailure(error: Throwable) {
+        if (lastError == null) {
+            log.error("Could not read or persist daily usage state at {}", file, error)
+            onPersistenceFailure(error)
+        }
+        lastError = error
+    }
+
+    private fun clearFailure() {
+        if (lastError != null) log.info("Daily usage state is available again: {}", file)
+        lastError = null
     }
 
     suspend fun consumed(client: String): Long = mutex.withLock {
@@ -104,14 +162,27 @@ class UsageStore(
     suspend fun exhausted(client: String, dailyLimit: Long): Boolean = mutex.withLock {
         load()
         rollOver()
+        if (dailyLimit > 0) ensureDurable()
         dailyLimit > 0 && (totals[client] ?: 0L) >= dailyLimit
     }
 
-    suspend fun record(client: String, tokens: Long): Unit = mutex.withLock {
+    suspend fun record(client: String, tokens: Long): Boolean = mutex.withLock {
         load()
         rollOver()
-        if (tokens <= 0) return
+        if (tokens <= 0) return true
         totals[client] = (totals[client] ?: 0L) + tokens
+        dirty = true
         persist()
+    }
+
+    suspend fun status(): UsageStatus = mutex.withLock {
+        try {
+            load()
+            rollOver()
+            ensureDurable()
+            UsageStatus(available = true)
+        } catch (_: UsageStateException) {
+            UsageStatus(available = false, error = "usage_state_unavailable")
+        }
     }
 }

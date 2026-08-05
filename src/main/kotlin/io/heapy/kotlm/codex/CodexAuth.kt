@@ -3,6 +3,7 @@ package io.heapy.kotlm.codex
 import io.heapy.kotlm.accountIdFromToken
 import io.heapy.kotlm.json
 import io.heapy.kotlm.obj
+import io.heapy.kotlm.replaceStateFile
 import io.heapy.kotlm.string
 import io.heapy.kotlm.tokenExpiresAt
 import kotlinx.serialization.json.JsonObject
@@ -10,11 +11,9 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import java.nio.file.Files
 import java.nio.file.Path
-import java.nio.file.StandardCopyOption
 import java.nio.file.attribute.PosixFilePermission
 import kotlin.io.path.exists
 import kotlin.io.path.readText
-import kotlin.io.path.writeText
 
 const val CODEX_BASE_URL: String = "https://chatgpt.com/backend-api/codex"
 const val CODEX_OAUTH_ISSUER: String = "https://auth.openai.com"
@@ -104,21 +103,19 @@ fun writeCredentials(stateFile: Path, credentials: CodexCredentials) {
         )
     }
 
-    stateFile.parent?.let { Files.createDirectories(it) }
-    val temporary = stateFile.resolveSibling("${stateFile.fileName}.tmp")
-    temporary.writeText(json.encodeToString(JsonObject.serializer(), document))
-    runCatching {
-        Files.setPosixFilePermissions(
-            temporary,
-            setOf(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE),
-        )
+    replaceStateFile(
+        file = stateFile,
+        contents = json.encodeToString(JsonObject.serializer(), document),
+    ) { temporary ->
+        try {
+            Files.setPosixFilePermissions(
+                temporary,
+                setOf(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE),
+            )
+        } catch (_: UnsupportedOperationException) {
+            // Non-POSIX filesystems do not expose these permissions.
+        }
     }
-    Files.move(
-        temporary,
-        stateFile,
-        StandardCopyOption.REPLACE_EXISTING,
-        StandardCopyOption.ATOMIC_MOVE,
-    )
 }
 
 fun credentialsExpiring(credentials: CodexCredentials, now: Long): Boolean {

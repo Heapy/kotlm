@@ -28,7 +28,7 @@ data class DeviceChallenge(
 
 sealed interface DevicePollResult {
     data class Pending(val retryAfterSeconds: Int) : DevicePollResult
-    data object Complete : DevicePollResult
+    data class Complete(val persisted: Boolean) : DevicePollResult
 }
 
 /**
@@ -113,9 +113,9 @@ class DeviceLogin(
             throw CodexAuthException("Device login response is incomplete", code = "device_code_incomplete")
         }
 
-        tokenManager.store(exchange(authorizationCode, codeVerifier))
+        val persisted = tokenManager.store(exchange(authorizationCode, codeVerifier))
         challenges.remove(challengeId)
-        return DevicePollResult.Complete
+        return DevicePollResult.Complete(persisted)
     }
 
     private suspend fun exchange(authorizationCode: String, codeVerifier: String): CodexCredentials {

@@ -66,6 +66,7 @@ fun testConfig(
     clients: List<ClientConfig> = listOf(ClientConfig(name = "sql-nastya", key = "client-key-0123456789")),
     allowedModels: List<String> = listOf("gpt-5.6-sol"),
     adminKey: String? = "admin-key-0123456789",
+    maxRequestBytes: Int = 1_048_576,
 ): KotlmConfig = KotlmConfig(
     host = "127.0.0.1",
     port = 0,
@@ -76,6 +77,7 @@ fun testConfig(
     adminKey = adminKey,
     allowedModels = allowedModels,
     upstreamTimeoutSeconds = 30,
+    maxRequestBytes = maxRequestBytes,
 )
 
 /** Codex response event stream from which the proxy assembles regular JSON. */
@@ -134,4 +136,37 @@ fun sseResponse(
         append("data: ").append(completed).append("\n\n")
         append("data: [DONE]\n\n")
     }
+}
+
+fun failedSseResponse(message: String = "Provider generation failed"): String {
+    val response = buildJsonObject {
+        put("id", "resp_failed")
+        put("object", "response")
+        put("status", "failed")
+        put("model", "gpt-5.6-sol")
+        put("output", kotlinx.serialization.json.buildJsonArray { })
+        put(
+            "error",
+            buildJsonObject {
+                put("code", "generation_failed")
+                put("message", message)
+            },
+        )
+        put(
+            "usage",
+            buildJsonObject {
+                put("input_tokens", 3)
+                put("output_tokens", 1)
+                put("total_tokens", 4)
+            },
+        )
+    }
+    val failed = json.encodeToString(
+        JsonObject.serializer(),
+        buildJsonObject {
+            put("type", "response.failed")
+            put("response", response)
+        },
+    )
+    return "data: $failed\n\ndata: [DONE]\n\n"
 }

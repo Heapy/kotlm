@@ -37,6 +37,7 @@ data class KotlmConfig(
     val adminKey: String?,
     val allowedModels: List<String>,
     val upstreamTimeoutSeconds: Long,
+    val maxRequestBytes: Int,
 ) {
     val clientsByKey: Map<String, ClientConfig> = clients.associateBy(ClientConfig::key)
 }
@@ -55,6 +56,35 @@ private fun intEnv(name: String, fallback: Int, minimum: Int, maximum: Int): Int
     return value
 }
 
+internal fun parseClients(document: String): List<ClientConfig> {
+    val clients = try {
+        json.decodeFromString<ClientsDocument>(document).clients
+    } catch (_: Exception) {
+        try {
+            json.decodeFromString<List<ClientConfig>>(document)
+        } catch (error: Exception) {
+            throw ConfigurationException("Client configuration is not valid JSON: ${error.message}")
+        }
+    }
+
+    if (clients.isEmpty()) throw ConfigurationException("Client configuration lists no clients")
+    val normalized = clients.map { it.copy(name = it.name.trim()) }
+    normalized.groupBy(ClientConfig::name).forEach { (name, duplicates) ->
+        if (name.isEmpty()) throw ConfigurationException("Client name must not be blank")
+        if (name == "unknown") throw ConfigurationException("Client name unknown is reserved")
+        if (duplicates.size > 1) throw ConfigurationException("Two clients share one name: $name")
+    }
+    normalized.groupBy(ClientConfig::key).forEach { (key, duplicates) ->
+        if (duplicates.size > 1) {
+            throw ConfigurationException("Two clients share one key: ${duplicates.joinToString { it.name }}")
+        }
+        if (key.length < 16) {
+            throw ConfigurationException("Key of client ${duplicates.first().name} is shorter than 16 characters")
+        }
+    }
+    return normalized
+}
+
 private fun readClients(): List<ClientConfig> {
     val document = env("KOTLM_CLIENTS_FILE")?.let { path ->
         val file = Path(path)
@@ -69,20 +99,7 @@ private fun readClients(): List<ClientConfig> {
         )
     }
 
-    val clients = runCatching { json.decodeFromString<ClientsDocument>(document).clients }
-        .recoverCatching { json.decodeFromString<List<ClientConfig>>(document) }
-        .getOrElse { throw ConfigurationException("Client configuration is not valid JSON: ${it.message}") }
-
-    if (clients.isEmpty()) throw ConfigurationException("Client configuration lists no clients")
-    clients.groupBy(ClientConfig::key).forEach { (key, duplicates) ->
-        if (duplicates.size > 1) {
-            throw ConfigurationException("Two clients share one key: ${duplicates.joinToString { it.name }}")
-        }
-        if (key.length < 16) {
-            throw ConfigurationException("Key of client ${duplicates.first().name} is shorter than 16 characters")
-        }
-    }
-    return clients
+    return parseClients(document)
 }
 
 fun loadConfig(): KotlmConfig {
@@ -100,5 +117,6 @@ fun loadConfig(): KotlmConfig {
             .map(String::trim)
             .filter(String::isNotEmpty),
         upstreamTimeoutSeconds = intEnv("KOTLM_UPSTREAM_TIMEOUT_SECONDS", 180, 5, 900).toLong(),
+        maxRequestBytes = intEnv("KOTLM_MAX_REQUEST_BYTES", 1_048_576, 1_024, 8_388_608),
     )
 }

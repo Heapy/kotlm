@@ -4,6 +4,8 @@ import io.heapy.kotlm.api.RequestException
 import io.heapy.kotlm.api.chatToResponsesPayload
 import io.heapy.kotlm.api.normalizeResponsesPayload
 import io.heapy.kotlm.api.responsesToChatCompletion
+import io.heapy.kotlm.api.responsesToChatCompletionStream
+import io.heapy.kotlm.codex.UpstreamProtocolException
 import kotlinx.serialization.json.JsonObject
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -99,6 +101,57 @@ class PayloadsTest {
     }
 
     @Test
+    fun `extracts text content parts without serializing their JSON`() {
+        val result = chatToResponsesPayload(
+            payload(
+                """{"model":"gpt-5.6-sol","messages":[{"role":"user","content":[
+                    {"type":"text","text":"hello "},{"type":"text","text":"world"}
+                ]}]}""",
+            ),
+        )
+
+        val message = result.array("input").orEmpty().filterIsInstance<JsonObject>().single()
+        assertEquals("hello world", message.string("content"))
+        assertFailsWith<RequestException> {
+            chatToResponsesPayload(
+                payload(
+                    """{"model":"gpt-5.6-sol","messages":[{"role":"user","content":[
+                        {"type":"image_url","image_url":{"url":"https://example.test/image.png"}}
+                    ]}]}""",
+                ),
+            )
+        }
+    }
+
+    @Test
+    fun `rejects tool requests before converting Chat payload`() {
+        val tools = """[{"type":"function","function":{"name":"lookup"}}]"""
+        val error = assertFailsWith<RequestException> {
+            chatToResponsesPayload(
+                payload("""{"model":"gpt-5.6-sol","messages":[{"role":"user","content":"x"}],"tools":$tools}"""),
+            )
+        }
+        assertEquals("unsupported_parameter", error.code)
+
+        assertFailsWith<RequestException> {
+            chatToResponsesPayload(
+                payload(
+                    """{"model":"gpt-5.6-sol","messages":[{"role":"user","content":"x"}],
+                        "tools":$tools,"tool_choice":"auto"}""",
+                ),
+            )
+        }
+
+        val disabled = chatToResponsesPayload(
+            payload(
+                """{"model":"gpt-5.6-sol","messages":[{"role":"user","content":"x"}],
+                    "tools":$tools,"tool_choice":"none"}""",
+            ),
+        )
+        assertEquals(null, disabled["tools"])
+    }
+
+    @Test
     fun `converts response_format json_schema to strict Responses format`() {
         val result = chatToResponsesPayload(
             payload(
@@ -112,7 +165,10 @@ class PayloadsTest {
     @Test
     fun `converts provider response to chat completion`() {
         val response = json.parseToJsonElement(
-            """{"id":"resp_9","model":"gpt-5.6-sol","status":"completed","usage":{"input_tokens":3,"output_tokens":4}}""",
+            """{"id":"resp_9","model":"gpt-5.6-sol","status":"completed","usage":{
+                "input_tokens":3,"output_tokens":4,"total_tokens":7,
+                "input_tokens_details":{"cached_tokens":2},"output_tokens_details":{"reasoning_tokens":1}
+            }}""",
         ) as JsonObject
 
         val completion = responsesToChatCompletion(response, "gpt-5.6-sol", "answer", created = 1_700_000_000)
@@ -121,6 +177,26 @@ class PayloadsTest {
         val choice = completion.array("choices").orEmpty().filterIsInstance<JsonObject>().single()
         assertEquals("answer", choice.obj("message")?.string("content"))
         assertEquals("stop", choice.string("finish_reason"))
+        val usage = completion.obj("usage")
+        assertEquals(3, usage?.long("prompt_tokens"))
+        assertEquals(4, usage?.long("completion_tokens"))
+        assertEquals(7, usage?.long("total_tokens"))
+        assertEquals(2, usage?.obj("prompt_tokens_details")?.long("cached_tokens"))
+        assertEquals(1, usage?.obj("completion_tokens_details")?.long("reasoning_tokens"))
+    }
+
+    @Test
+    fun `does not turn a failed Responses result into a Chat success`() {
+        val response = payload(
+            """{"id":"resp_failed","status":"failed","error":{"message":"generation failed"}}""",
+        )
+
+        assertFailsWith<UpstreamProtocolException> {
+            responsesToChatCompletion(response, "gpt-5.6-sol", "partial", created = 1)
+        }
+        assertFailsWith<UpstreamProtocolException> {
+            responsesToChatCompletionStream(response, "gpt-5.6-sol", emptyList(), created = 1, includeUsage = false)
+        }
     }
 
     @Test

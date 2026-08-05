@@ -14,7 +14,9 @@ class UpstreamProtocolException(message: String) : RuntimeException(message)
  * Codex returns only an event stream, so regular JSON responses must be assembled here.
  * Data lines are collected until an empty line and then parsed as one event.
  */
-class SseCollector {
+class SseCollector(
+    private val onEvent: (JsonObject) -> Unit = {},
+) {
     private val dataParts = mutableListOf<String>()
     private val output = mutableListOf<JsonObject>()
     private var response: JsonObject? = null
@@ -39,6 +41,7 @@ class SseCollector {
 
         val event = runCatching { json.parseToJsonElement(value) as JsonObject }
             .getOrElse { throw UpstreamProtocolException("Codex sent an event that is not JSON") }
+        onEvent(event)
 
         when (event.string("type")) {
             "error" -> throw UpstreamProtocolException(event.string("message") ?: "Codex stream failed")
@@ -60,10 +63,19 @@ class SseCollector {
     }
 }
 
-suspend fun collectResponse(channel: ByteReadChannel): JsonObject {
-    val collector = SseCollector()
+suspend fun collectResponse(
+    channel: ByteReadChannel,
+    maxCharacters: Int = Int.MAX_VALUE,
+    onEvent: (JsonObject) -> Unit = {},
+): JsonObject {
+    val collector = SseCollector(onEvent)
+    var characters = 0
     while (true) {
         val line = channel.readLine() ?: break
+        characters += line.length + 1
+        if (characters > maxCharacters) {
+            throw UpstreamProtocolException("Model provider sent more than $maxCharacters characters")
+        }
         if (!collector.feed(line)) break
     }
     return collector.result()

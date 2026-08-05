@@ -33,6 +33,7 @@ class ApplicationModule(
         authFile = config.authFile,
         stateFile = config.stateFile,
         httpClient = httpClient,
+        onPersistenceFailure = { countStatePersistenceFailure("auth") },
     )
 
     val deviceLogin: DeviceLogin = DeviceLogin(httpClient = httpClient, tokenManager = tokenManager)
@@ -41,7 +42,10 @@ class ApplicationModule(
 
     val rateLimiter: RateLimiter = RateLimiter()
 
-    val usage: UsageStore = UsageStore(config.usageFile)
+    val usage: UsageStore = UsageStore(
+        file = config.usageFile,
+        onPersistenceFailure = { countStatePersistenceFailure("usage") },
+    )
 
     fun countRequest(client: String, endpoint: String, outcome: String) {
         registry.counter("kotlm.requests", "client", client, "endpoint", endpoint, "outcome", outcome).increment()
@@ -54,6 +58,10 @@ class ApplicationModule(
 
     fun countUpstreamError(code: String) {
         registry.counter("kotlm.upstream.errors", "code", code).increment()
+    }
+
+    fun countStatePersistenceFailure(state: String) {
+        registry.counter("kotlm.state.persistence.failures", "state", state).increment()
     }
 }
 

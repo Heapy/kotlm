@@ -26,17 +26,19 @@ class CodexUpstream(
     suspend fun <T> stream(
         payload: JsonObject,
         requestId: String,
+        promptCacheKey: String,
         consumer: suspend (HttpResponse) -> T,
     ): T = try {
-        attempt(payload, requestId, forceRefresh = false, consumer = consumer)
+        attempt(payload, requestId, promptCacheKey, forceRefresh = false, consumer = consumer)
     } catch (_: UnauthorizedUpstream) {
         // The token may expire between the exp check and the request, so refresh and retry once.
-        attempt(payload, requestId, forceRefresh = true, consumer = consumer)
+        attempt(payload, requestId, promptCacheKey, forceRefresh = true, consumer = consumer)
     }
 
     private suspend fun <T> attempt(
         payload: JsonObject,
         requestId: String,
+        promptCacheKey: String,
         forceRefresh: Boolean,
         consumer: suspend (HttpResponse) -> T,
     ): T {
@@ -44,7 +46,7 @@ class CodexUpstream(
         val body = payload.with(
             "stream" to JsonPrimitive(true),
             // The subscription caches the shared request prefix under this key.
-            "prompt_cache_key" to JsonPrimitive(requestId),
+            "prompt_cache_key" to JsonPrimitive(promptCacheKey),
         )
 
         return httpClient.preparePost("${credentials.baseUrl}/responses") {

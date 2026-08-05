@@ -18,6 +18,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import java.nio.file.Files
 import kotlin.io.path.readText
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -136,5 +137,75 @@ class CodexAuthTest {
 
         val error = assertFailsWith<CodexAuthException> { manager.credentials() }
         assertTrue(error.reloginRequired)
+    }
+
+    @Test
+    fun `keeps a rotated token in memory and retries a failed state write`() = runBlocking {
+        val directory = tempDirectory()
+        writeAuthFile(directory, accessToken = testAccessToken(expiresInSeconds = 10), refreshToken = "refresh-old")
+        val blockedParent = directory.resolve("state")
+        Files.writeString(blockedParent, "not-a-directory")
+        val state = blockedParent.resolve("auth.json")
+        var refreshCalls = 0
+        var persistenceFailures = 0
+
+        val engine = MockEngine {
+            refreshCalls += 1
+            respond(
+                content = json.encodeToString(
+                    JsonObject.serializer(),
+                    buildJsonObject {
+                        put("access_token", testAccessToken())
+                        put("refresh_token", "refresh-rotated")
+                    },
+                ),
+                status = HttpStatusCode.OK,
+                headers = headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()),
+            )
+        }
+        val manager = TokenManager(
+            authFile = directory.resolve("codex_auth.json"),
+            stateFile = state,
+            httpClient = HttpClient(engine),
+            onPersistenceFailure = { persistenceFailures += 1 },
+        )
+
+        assertEquals("refresh-rotated", manager.credentials().refreshToken)
+        assertEquals("refresh-rotated", manager.credentials().refreshToken)
+        assertEquals(1, refreshCalls)
+        assertEquals("auth_state_not_persisted", manager.status().error)
+        assertTrue(persistenceFailures > 0)
+
+        Files.delete(blockedParent)
+        Files.createDirectories(blockedParent)
+        assertEquals(null, manager.status().error)
+        assertEquals("refresh-rotated", readCredentials(state, directory.resolve("codex_auth.json")).refreshToken)
+    }
+
+    @Test
+    fun `device credentials remain usable when their first state write fails`() = runBlocking {
+        val directory = tempDirectory()
+        val blockedParent = directory.resolve("state")
+        Files.writeString(blockedParent, "not-a-directory")
+        val state = blockedParent.resolve("auth.json")
+        val manager = TokenManager(
+            authFile = directory.resolve("missing-auth.json"),
+            stateFile = state,
+            httpClient = HttpClient(MockEngine { throw AssertionError("OAuth must not be called") }),
+        )
+        val credentials = CodexCredentials(
+            accessToken = testAccessToken(),
+            refreshToken = "refresh-device",
+            baseUrl = "https://codex.test",
+        )
+
+        assertFalse(manager.store(credentials))
+        assertTrue(manager.status().authenticated)
+        assertEquals("auth_state_not_persisted", manager.status().error)
+
+        Files.delete(blockedParent)
+        Files.createDirectories(blockedParent)
+        assertEquals(null, manager.status().error)
+        assertEquals("refresh-device", readCredentials(state, directory.resolve("missing-auth.json")).refreshToken)
     }
 }

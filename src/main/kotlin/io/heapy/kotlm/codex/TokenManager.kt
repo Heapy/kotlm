@@ -11,7 +11,10 @@ import io.ktor.http.parameters
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.JsonObject
+import org.slf4j.LoggerFactory
 import java.nio.file.Path
+
+private val log = LoggerFactory.getLogger(TokenManager::class.java)
 
 data class AuthStatus(
     val authenticated: Boolean,
@@ -30,14 +33,24 @@ class TokenManager(
     private val stateFile: Path,
     private val httpClient: HttpClient,
     private val now: () -> Long = { System.currentTimeMillis() / 1_000 },
+    private val onPersistenceFailure: (Throwable) -> Unit = {},
 ) {
     private val mutex = Mutex()
     private var cached: CodexCredentials? = null
+    private var pendingPersistence: CodexCredentials? = null
+    private var persistenceError: Throwable? = null
 
     suspend fun credentials(forceRefresh: Boolean = false): CodexCredentials = mutex.withLock {
         val current = cached ?: readCredentials(stateFile, authFile)
+        cached = current
+        pendingPersistence?.let(::persist)
+
         val fresh = if (forceRefresh || credentialsExpiring(current, now())) {
-            refresh(current).also { writeCredentials(stateFile, it) }
+            refresh(current).also {
+                cached = it
+                pendingPersistence = it
+                persist(it)
+            }
         } else {
             current
         }
@@ -45,30 +58,46 @@ class TokenManager(
         fresh
     }
 
-    suspend fun store(credentials: CodexCredentials): Unit = mutex.withLock {
-        writeCredentials(stateFile, credentials)
+    suspend fun store(credentials: CodexCredentials): Boolean = mutex.withLock {
         cached = credentials
+        pendingPersistence = credentials
+        persist(credentials)
     }
 
     suspend fun status(): AuthStatus = mutex.withLock {
-        runCatching { cached ?: readCredentials(stateFile, authFile).also { cached = it } }
-            .fold(
-                onSuccess = { credentials ->
-                    AuthStatus(
-                        authenticated = true,
-                        expiresInSeconds = credentials.expiresAt()?.let { it - now() },
-                        accountId = credentials.accountId,
-                    )
-                },
-                onFailure = { error ->
-                    AuthStatus(
-                        authenticated = false,
-                        expiresInSeconds = null,
-                        accountId = null,
-                        error = (error as? CodexAuthException)?.code ?: "auth_unavailable",
-                    )
-                },
+        try {
+            val credentials = cached ?: readCredentials(stateFile, authFile).also { cached = it }
+            pendingPersistence?.let(::persist)
+            AuthStatus(
+                authenticated = true,
+                expiresInSeconds = credentials.expiresAt()?.let { it - now() },
+                accountId = credentials.accountId,
+                error = persistenceError?.let { "auth_state_not_persisted" },
             )
+        } catch (error: Exception) {
+            AuthStatus(
+                authenticated = false,
+                expiresInSeconds = null,
+                accountId = null,
+                error = (error as? CodexAuthException)?.code ?: "auth_unavailable",
+            )
+        }
+    }
+
+    private fun persist(credentials: CodexCredentials): Boolean = try {
+        writeCredentials(stateFile, credentials)
+        if (persistenceError != null) log.info("Codex auth state is writable again: {}", stateFile)
+        pendingPersistence = null
+        persistenceError = null
+        true
+    } catch (error: Exception) {
+        pendingPersistence = credentials
+        if (persistenceError == null) {
+            log.error("Could not persist Codex auth state to {}", stateFile, error)
+            onPersistenceFailure(error)
+        }
+        persistenceError = error
+        false
     }
 
     private suspend fun refresh(current: CodexCredentials): CodexCredentials {

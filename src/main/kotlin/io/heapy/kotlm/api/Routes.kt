@@ -9,16 +9,19 @@ import io.heapy.kotlm.codex.SseCollector
 import io.heapy.kotlm.codex.UpstreamProtocolException
 import io.heapy.kotlm.codex.collectResponse
 import io.heapy.kotlm.json
+import io.heapy.kotlm.limits.UsageStateException
+import io.heapy.kotlm.obj
 import io.heapy.kotlm.outputText
 import io.heapy.kotlm.string
 import io.heapy.kotlm.usageTokens
 import io.ktor.http.ContentType
+import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsChannel
 import io.ktor.client.statement.bodyAsText
 import io.ktor.server.application.ApplicationCall
-import io.ktor.server.request.receiveText
+import io.ktor.server.request.receiveChannel
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
 import io.ktor.server.routing.post
@@ -26,6 +29,8 @@ import io.ktor.server.routing.route
 import io.ktor.server.routing.routing
 import io.ktor.server.application.Application
 import io.ktor.utils.io.readLine
+import io.ktor.utils.io.readRemaining
+import kotlinx.io.readByteArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
@@ -33,6 +38,7 @@ import kotlinx.serialization.json.add
 import kotlinx.serialization.json.put
 import java.io.IOException
 import java.security.MessageDigest
+import java.util.HexFormat
 import java.util.UUID
 
 private const val UPSTREAM_ERROR_PREVIEW = 300
@@ -70,6 +76,10 @@ private fun ApplicationCall.bearerKey(): String? =
 private fun secretsEqual(left: String, right: String): Boolean =
     MessageDigest.isEqual(left.toByteArray(), right.toByteArray())
 
+internal fun ClientConfig.promptCacheKey(): String = HexFormat.of().formatHex(
+    MessageDigest.getInstance("SHA-256").digest("kotlm:client:$key".toByteArray()),
+)
+
 private fun ApplicationCall.resolveClient(module: ApplicationModule): ClientConfig? {
     val key = bearerKey() ?: return null
     return module.config.clients.firstOrNull { secretsEqual(it.key, key) }
@@ -81,9 +91,31 @@ private fun ApplicationCall.isAdmin(module: ApplicationModule): Boolean {
     return secretsEqual(adminKey, key)
 }
 
-private suspend fun ApplicationCall.receiveJsonObject(): JsonObject =
-    runCatching { json.parseToJsonElement(receiveText()) as JsonObject }
-        .getOrElse { throw RequestException("Request body must be a JSON object") }
+private suspend fun ApplicationCall.receiveJsonObject(maxBytes: Int): JsonObject {
+    val declaredSize = request.headers[HttpHeaders.ContentLength]?.toLongOrNull()
+    if (declaredSize != null && declaredSize > maxBytes) {
+        throw RequestException(
+            message = "Request body exceeds the $maxBytes byte limit",
+            code = "request_too_large",
+            status = HttpStatusCode.PayloadTooLarge,
+        )
+    }
+
+    val bytes = receiveChannel().readRemaining(maxBytes.toLong() + 1).readByteArray()
+    if (bytes.size > maxBytes) {
+        throw RequestException(
+            message = "Request body exceeds the $maxBytes byte limit",
+            code = "request_too_large",
+            status = HttpStatusCode.PayloadTooLarge,
+        )
+    }
+
+    return runCatching {
+        json.parseToJsonElement(bytes.decodeToString(throwOnInvalidSequence = true)) as JsonObject
+    }.getOrElse {
+        throw RequestException("Request body must be a UTF-8 JSON object")
+    }
+}
 
 /**
  * Shared admission path for both routes. The project key, minute window, and daily
@@ -109,7 +141,19 @@ private suspend fun ApplicationCall.admitted(module: ApplicationModule, endpoint
         return null
     }
 
-    if (module.usage.exhausted(client.name, client.dailyTokens)) {
+    val budgetExhausted = try {
+        module.usage.exhausted(client.name, client.dailyTokens)
+    } catch (_: UsageStateException) {
+        module.countRequest(client.name, endpoint, "state_unavailable")
+        respondError(
+            HttpStatusCode.ServiceUnavailable,
+            "usage_state_unavailable",
+            "Daily usage state is unavailable; refusing requests until persistence recovers",
+        )
+        return null
+    }
+
+    if (budgetExhausted) {
         module.countRequest(client.name, endpoint, "budget_exhausted")
         respondError(
             HttpStatusCode.TooManyRequests,
@@ -139,22 +183,45 @@ private suspend fun recordUsage(module: ApplicationModule, client: String, resul
     module.usage.record(client, input + output)
 }
 
+private suspend fun ApplicationCall.relayFailedResponse(
+    module: ApplicationModule,
+    result: JsonObject,
+    endpoint: String,
+    client: String,
+): Boolean {
+    if (result.string("status") != "failed") return false
+    val providerError = result.obj("error")
+    module.countUpstreamError(providerError?.string("code") ?: "response_failed")
+    module.countRequest(client, endpoint, "upstream_error")
+    respondError(
+        HttpStatusCode.BadGateway,
+        "upstream_response_failed",
+        providerError?.string("message") ?: "Model provider failed to generate a response",
+    )
+    return true
+}
+
 fun Application.configureRouting(module: ApplicationModule) = routing {
     get("/health") {
-        val status = module.tokenManager.status()
+        val auth = module.tokenManager.status()
+        val usage = module.usage.status()
+        val healthy = auth.authenticated && auth.error == null && usage.available
         call.respondText(
             text = json.encodeToString(
                 JsonObject.serializer(),
                 buildJsonObject {
-                    put("status", if (status.authenticated) "ok" else "degraded")
-                    put("authenticated", status.authenticated)
-                    status.expiresInSeconds?.let { put("tokenExpiresInSeconds", it) }
-                    status.error?.let { put("error", it) }
+                    put("status", if (healthy) "ok" else "degraded")
+                    put("authenticated", auth.authenticated)
+                    auth.expiresInSeconds?.let { put("tokenExpiresInSeconds", it) }
+                    (auth.error ?: usage.error)?.let { put("error", it) }
+                    auth.error?.let { put("authError", it) }
+                    put("usageStateAvailable", usage.available)
+                    usage.error?.let { put("usageError", it) }
                     put("clients", module.config.clients.size)
                 },
             ),
             contentType = ContentType.Application.Json,
-            status = if (status.authenticated) HttpStatusCode.OK else HttpStatusCode.ServiceUnavailable,
+            status = if (healthy) HttpStatusCode.OK else HttpStatusCode.ServiceUnavailable,
         )
     }
 
@@ -184,6 +251,7 @@ fun Application.configureRouting(module: ApplicationModule) = routing {
                                         buildJsonObject {
                                             put("id", model)
                                             put("object", "model")
+                                            put("created", 0)
                                             put("owned_by", "openai-codex")
                                         },
                                     )
@@ -198,12 +266,12 @@ fun Application.configureRouting(module: ApplicationModule) = routing {
 
         post("/responses") {
             val client = call.admitted(module, "responses") ?: return@post
-            val body = call.receiveJsonObject()
+            val body = call.receiveJsonObject(module.config.maxRequestBytes)
             val payload = normalizeResponsesPayload(body, module.config.allowedModels)
             val streaming = body.boolean("stream") == true
             val requestId = call.request.headers["X-Request-Id"] ?: UUID.randomUUID().toString()
 
-            module.upstream.stream(payload, requestId) { response ->
+            module.upstream.stream(payload, requestId, client.promptCacheKey()) { response ->
                 if (response.status.value >= 400) {
                     call.relayUpstreamError(module, response, "responses", client.name)
                     return@stream
@@ -229,7 +297,7 @@ fun Application.configureRouting(module: ApplicationModule) = routing {
                     module.countRequest(client.name, "responses", "streamed")
                     call.respondText(events.toString(), ContentType.Text.EventStream)
                 } else {
-                    val result = collectResponse(response.bodyAsChannel())
+                    val result = collectResponse(response.bodyAsChannel(), MAX_STREAM_CHARACTERS)
                     recordUsage(module, client.name, result)
                     module.countRequest(client.name, "responses", "ok")
                     call.respondText(
@@ -242,30 +310,54 @@ fun Application.configureRouting(module: ApplicationModule) = routing {
 
         post("/chat/completions") {
             val client = call.admitted(module, "chat") ?: return@post
-            val body = call.receiveJsonObject()
+            val body = call.receiveJsonObject(module.config.maxRequestBytes)
             val payload = normalizeResponsesPayload(chatToResponsesPayload(body), module.config.allowedModels)
+            val streaming = body.boolean("stream") == true
+            val includeUsage = body.obj("stream_options")?.boolean("include_usage") == true
             val requestId = call.request.headers["X-Request-Id"] ?: UUID.randomUUID().toString()
 
-            module.upstream.stream(payload, requestId) { response ->
+            module.upstream.stream(payload, requestId, client.promptCacheKey()) { response ->
                 if (response.status.value >= 400) {
                     call.relayUpstreamError(module, response, "chat", client.name)
                     return@stream
                 }
-                val result = collectResponse(response.bodyAsChannel())
+                val events = mutableListOf<JsonObject>()
+                val result = collectResponse(
+                    channel = response.bodyAsChannel(),
+                    maxCharacters = MAX_STREAM_CHARACTERS,
+                    onEvent = events::add,
+                )
                 recordUsage(module, client.name, result)
-                module.countRequest(client.name, "chat", "ok")
-                call.respondText(
-                    text = json.encodeToString(
-                        JsonObject.serializer(),
-                        responsesToChatCompletion(
+                if (call.relayFailedResponse(module, result, "chat", client.name)) return@stream
+
+                val created = System.currentTimeMillis() / 1_000
+                if (streaming) {
+                    module.countRequest(client.name, "chat", "streamed")
+                    call.respondText(
+                        text = responsesToChatCompletionStream(
                             response = result,
                             requestedModel = body.string("model") ?: "",
-                            text = outputText(result),
-                            created = System.currentTimeMillis() / 1_000,
+                            events = events,
+                            created = created,
+                            includeUsage = includeUsage,
                         ),
-                    ),
-                    contentType = ContentType.Application.Json,
-                )
+                        contentType = ContentType.Text.EventStream,
+                    )
+                } else {
+                    module.countRequest(client.name, "chat", "ok")
+                    call.respondText(
+                        text = json.encodeToString(
+                            JsonObject.serializer(),
+                            responsesToChatCompletion(
+                                response = result,
+                                requestedModel = body.string("model") ?: "",
+                                text = outputText(result),
+                                created = created,
+                            ),
+                        ),
+                        contentType = ContentType.Application.Json,
+                    )
+                }
             }
         }
     }
@@ -315,7 +407,7 @@ fun Application.configureRouting(module: ApplicationModule) = routing {
             if (!call.isAdmin(module)) return@post call.respondError(
                 HttpStatusCode.Unauthorized, "invalid_admin_key", "Admin key required",
             )
-            val id = call.receiveJsonObject().string("id")
+            val id = call.receiveJsonObject(module.config.maxRequestBytes).string("id")
                 ?: throw RequestException("id of the device login is required")
             val result = module.deviceLogin.poll(id)
             call.respondText(
@@ -327,7 +419,13 @@ fun Application.configureRouting(module: ApplicationModule) = routing {
                                 put("status", "pending")
                                 put("retryAfterSeconds", result.retryAfterSeconds)
                             }
-                            DevicePollResult.Complete -> put("status", "complete")
+                            is DevicePollResult.Complete -> {
+                                put("status", "complete")
+                                put("persisted", result.persisted)
+                                if (!result.persisted) {
+                                    put("warning", "Authentication succeeded, but the rotated token is not yet persisted")
+                                }
+                            }
                         }
                     },
                 ),
@@ -338,7 +436,8 @@ fun Application.configureRouting(module: ApplicationModule) = routing {
 }
 
 fun statusOf(error: Throwable): Pair<HttpStatusCode, String> = when (error) {
-    is RequestException -> HttpStatusCode.BadRequest to error.code
+    is RequestException -> error.status to error.code
+    is UsageStateException -> HttpStatusCode.ServiceUnavailable to "usage_state_unavailable"
     is CodexAuthException -> when {
         error.reloginRequired -> HttpStatusCode.Unauthorized
         error.code == "codex_rate_limited" -> HttpStatusCode.TooManyRequests
