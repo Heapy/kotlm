@@ -1,0 +1,10 @@
+{
+  "clients": [
+    {
+      "name": "example-project",
+      "key": "replace-with-a-long-random-project-key",
+      "requestsPerMinute": 30,
+      "dailyTokens": 300000
+    }
+  ]
+}

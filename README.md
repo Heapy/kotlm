@@ -19,11 +19,14 @@ A Codex subscription uses an OAuth session rather than an API key: a short-lived
 ## Quick start
 
 ```bash
-cp .env.example .env                      # project keys and the administrator key
+mkdir -p secrets
+cp clients.example.json secrets/clients.json
+cp .env.example .env
+# Replace the example project key and administrator key in the copied files.
 docker compose up -d
 ```
 
-The proxy refuses to start without project keys. An unauthenticated open port would expose the subscription to anyone who could reach it.
+The proxy refuses to start without project keys. The Codex auth file is optional: a clean deployment starts in a degraded readiness state so authorization can be completed through the device-code flow below.
 
 ## Subscription authorization
 
@@ -42,8 +45,10 @@ Open the link on a phone, enter the code, and then poll for completion:
 curl -sX POST -H "Authorization: Bearer $KOTLM_ADMIN_KEY" \
      -H 'Content-Type: application/json' -d '{"id":"..."}' \
      http://kotlm:8080/auth/device/poll
-# {"status":"pending","retryAfterSeconds":5} → {"status":"complete"}
+# {"status":"pending","retryAfterSeconds":5} → {"status":"complete","persisted":true}
 ```
+
+If `persisted` is false, the new token remains usable in memory and the proxy retries the state write. `/health` remains degraded until the token is safely stored.
 
 **Log in by copying a file**: place the Codex CLI `auth.json` at `secrets/codex_auth.json`. Both the flat `{"tokens":{...}}` form and the wrapped `{"providers":{"openai-codex":{...}}}` form are supported. Do not use the copy at the same time as a live Codex CLI session: there is only one refresh token, and the first exchange invalidates the other instance.
 
@@ -56,7 +61,7 @@ Check subscription state with `GET /auth/status` using the administrator key, or
 | `POST /v1/responses` | Primary endpoint: the OpenAI Responses contract, including `text.format` with a strict JSON schema |
 | `POST /v1/chat/completions` | Compatibility for existing SDKs: messages are converted to Responses input and the result is converted back |
 | `GET /v1/models` | List of allowed models |
-| `GET /health` | Readiness; returns 503 until the subscription is authorized |
+| `GET /health` | Readiness; returns 503 until authorization and durable state are available |
 | `GET /live` | Liveness probe for the Docker health check; returns 200 while the process is alive |
 | `GET /metrics` | Prometheus metrics |
 
@@ -65,14 +70,15 @@ Requests are authorized with the `Authorization: Bearer <project key>` header.
 The proxy applies these changes to every request:
 
 - `store` is always `false`, so conversations are not retained by the provider;
-- provider tools (`tools`), references to previous responses (`previous_response_id`, `conversation`, `prompt`), and non-text input are rejected because their token cost cannot be determined from the request body;
+- Responses provider tools, references to previous responses (`previous_response_id`, `conversation`, `prompt`), and non-text input are rejected because their token cost cannot be determined from the request body;
+- Chat `content` arrays are accepted when every part has `type: "text"`; images, audio, files, tool calls, and tool messages are rejected explicitly. A `tools` declaration is accepted only when `tool_choice` is `"none"`, which guarantees that no function call is expected;
 - models outside `KOTLM_ALLOWED_MODELS` are rejected so a typo cannot consume the subscription;
 - a string in `input` is wrapped in a list because the OpenAI contract permits a string while Codex responds with `Input must be a list`;
 - `max_output_tokens` **is not sent to the provider** because the subscription responds with `Unsupported parameter`. The value is checked for validity and then discarded, so this parameter cannot limit response length.
 
 The model available to a ChatGPT account is `gpt-5.6-sol`. Names such as `gpt-5.6`, `gpt-5-codex`, and `gpt-5.6-codex` are rejected by the subscription with `model is not supported when using Codex with a ChatGPT account`.
 
-`stream: true` is supported, but events are returned together at the end rather than as they are generated. This is due to Ktor writing a streaming response body lazily, after the provider connection has already closed, so the stream is read in full during the request. The event format remains genuine SSE and client SDKs parse it normally.
+`stream: true` is supported, but events are returned together at the end rather than as they are generated. Responses clients receive provider Responses events; Chat Completions clients receive OpenAI-compatible `chat.completion.chunk` events followed by `data: [DONE]`. `stream_options.include_usage` adds the standard final usage chunk with an empty `choices` array.
 
 ## Project keys, limits, and budgets
 
@@ -86,10 +92,13 @@ The model available to a ChatGPT account is `gpt-5.6-sol`. Names such as `gpt-5.
 ```
 
 - Every project has its own key, making usage attributable and allowing one project to be revoked without affecting the others.
+- Client names are trimmed and must be unique; blank names and the reserved name `unknown` are rejected at startup.
 - `requestsPerMinute` is a sliding in-memory window that starts fresh after a restart.
 - `dailyTokens` is a daily ceiling. Usage is persisted to `KOTLM_USAGE_FILE` and survives restarts; otherwise restarting would reset the limit. Use `0` for no limit.
 
 Both limits are checked before the subscription is contacted.
+
+State writes use an atomic replacement when the filesystem supports it and fall back to a regular replacement otherwise. A failed daily-usage write is observable through logs, metrics, and `/health`; projects with a daily ceiling are blocked with `usage_state_unavailable` until a retry succeeds. This prevents a restart from silently restoring an older budget.
 
 ## Configuration
 
@@ -103,10 +112,11 @@ Both limits are checked before the subscription is contacted.
 | `KOTLM_STATE_FILE`, `KOTLM_USAGE_FILE` | Derived from `STATE_DIR` | Exact paths when the state directory is unsuitable |
 | `KOTLM_ALLOWED_MODELS` | `gpt-5.6-sol` | Comma-separated list of models |
 | `KOTLM_UPSTREAM_TIMEOUT_SECONDS` | `180` | Provider request timeout |
+| `KOTLM_MAX_REQUEST_BYTES` | `1048576` | Maximum UTF-8 JSON body size in bytes; accepted range is 1 KiB through 8 MiB |
 
 ## Metrics
 
-`kotlm_requests_total{client,endpoint,outcome}`, `kotlm_tokens_total{client,kind}`, and `kotlm_upstream_errors_total{code}`, plus the standard Ktor and JVM metrics.
+`kotlm_requests_total{client,endpoint,outcome}`, `kotlm_tokens_total{client,kind}`, `kotlm_upstream_errors_total{code}`, and `kotlm_state_persistence_failures_total{state}`, plus the standard Ktor and JVM metrics.
 
 ## Development
 

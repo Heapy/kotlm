@@ -1,29 +1,23 @@
 services:
   kotlm:
-    image: ghcr.io/heapy/kotlm:main
+    image: "${KOTLM_IMAGE:-ghcr.io/heapy/kotlm:main}"
     build: .
     restart: unless-stopped
     environment:
-      KOTLM_CLIENTS_FILE: /run/secrets/kotlm_clients
+      KOTLM_CLIENTS_FILE: /run/kotlm-secrets/clients.json
       KOTLM_ADMIN_KEY: "${KOTLM_ADMIN_KEY:?set KOTLM_ADMIN_KEY in .env}"
-      KOTLM_AUTH_FILE: /run/secrets/codex_auth
+      KOTLM_AUTH_FILE: /run/kotlm-secrets/codex_auth.json
       KOTLM_STATE_DIR: /var/lib/kotlm
       KOTLM_ALLOWED_MODELS: "${KOTLM_ALLOWED_MODELS:-gpt-5.6-sol}"
-    secrets:
-      - codex_auth
-      - kotlm_clients
     volumes:
+      # The directory is mounted instead of individual Docker secrets so the
+      # optional auth bootstrap file may be absent during device-code login.
+      - ./secrets:/run/kotlm-secrets:ro
       # The rotated refresh token and daily usage must survive restarts.
       - kotlm_state:/var/lib/kotlm
     ports:
       # Bind locally so only neighboring services and the host can reach the proxy.
       - "127.0.0.1:8080:8080"
-
-secrets:
-  codex_auth:
-    file: ./secrets/codex_auth.json
-  kotlm_clients:
-    file: ./secrets/clients.json
 
 volumes:
   kotlm_state:
