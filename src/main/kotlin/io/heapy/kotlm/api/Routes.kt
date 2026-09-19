@@ -336,7 +336,7 @@ fun Application.configureRouting(module: ApplicationModule) = routing {
                     call.respondText(
                         text = responsesToChatCompletionStream(
                             response = result,
-                            requestedModel = body.string("model") ?: "",
+                            requestedModel = payload.string("model") ?: "",
                             events = events,
                             created = created,
                             includeUsage = includeUsage,
@@ -350,7 +350,7 @@ fun Application.configureRouting(module: ApplicationModule) = routing {
                             JsonObject.serializer(),
                             responsesToChatCompletion(
                                 response = result,
-                                requestedModel = body.string("model") ?: "",
+                                requestedModel = payload.string("model") ?: "",
                                 text = outputText(result),
                                 created = created,
                             ),

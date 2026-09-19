@@ -60,6 +60,62 @@ class PayloadsTest {
     }
 
     @Test
+    fun `upgrades known older models to their current tiers`() {
+        val upgrades = mapOf(
+            "gpt-5.2" to "gpt-5.6-sol",
+            "gpt-5.3-codex" to "gpt-5.6-sol",
+            "gpt-5.3-codex-spark" to "gpt-5.6-luna",
+            "gpt-5.4" to "gpt-5.6-terra",
+            "gpt-5.4-mini" to "gpt-5.6-luna",
+            "gpt-5.5" to "gpt-5.6-sol",
+        )
+        for ((requested, target) in upgrades) {
+            val body = payload(
+                """{"model":"$requested","input":"hello","reasoning":{"effort":"low"},
+                    "text":{"format":{"type":"json_schema","name":"answer","strict":true,"schema":{"type":"object"}}}}""",
+            )
+            val result = normalizeResponsesPayload(body, DEFAULT_ALLOWED_MODELS)
+
+            assertEquals(target, result.string("model"), requested)
+            assertEquals(body["reasoning"], result["reasoning"])
+            assertEquals(body["text"], result["text"])
+            assertEquals("hello", result.array("input")?.filterIsInstance<JsonObject>()?.single()?.string("content"))
+            assertEquals(requested, body.string("model"))
+        }
+    }
+
+    @Test
+    fun `passes current models through unchanged`() {
+        for (model in listOf("gpt-6-astra", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna")) {
+            val result = normalizeResponsesPayload(payload("""{"model":"$model","input":"hello"}"""), DEFAULT_ALLOWED_MODELS)
+
+            assertEquals(model, result.string("model"))
+        }
+    }
+
+    @Test
+    fun `requires the upgrade target to be allowed even when the old model is allowed`() {
+        for (allowed in listOf(listOf("gpt-5.4"), listOf("gpt-6-astra"))) {
+            val error = assertFailsWith<RequestException> {
+                normalizeResponsesPayload(payload("""{"model":"gpt-5.4","input":"hello"}"""), allowed)
+            }
+
+            assertEquals("model_not_allowed", error.code)
+        }
+    }
+
+    @Test
+    fun `does not guess upgrades for unknown names or dated variants`() {
+        for (model in listOf("gpt-5.4-typo", "gpt-5.4-2026-03-05")) {
+            val body = payload("""{"model":"$model","input":"hello"}""")
+            val error = assertFailsWith<RequestException> { normalizeResponsesPayload(body, DEFAULT_ALLOWED_MODELS) }
+
+            assertEquals("model_not_allowed", error.code)
+            assertEquals(model, normalizeResponsesPayload(body, listOf(model)).string("model"))
+        }
+    }
+
+    @Test
     fun `rejects provider tools and non-text input`() {
         assertFailsWith<RequestException> {
             normalize("""{"model":"gpt-5.6-sol","input":"x","tools":[{"type":"web_search"}]}""")

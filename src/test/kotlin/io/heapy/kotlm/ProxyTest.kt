@@ -145,6 +145,117 @@ class ProxyTest {
     }
 
     @Test
+    fun `both endpoints forward upgraded models and report them in JSON and streams`() = testApplication {
+        val upstreamModels = mutableListOf<String>()
+        val engine = MockEngine { request ->
+            val payload = json.parseToJsonElement(request.body.toByteArray().decodeToString()) as JsonObject
+            val model = payload.string("model") ?: error("model is required")
+            upstreamModels += model
+            respond(
+                content = ByteReadChannel(sseResponse(model = model)),
+                status = HttpStatusCode.OK,
+                headers = headersOf(HttpHeaders.ContentType, ContentType.Text.EventStream.toString()),
+            )
+        }
+        val appModule = applicationModule(engine = engine)
+        application { module(appModule) }
+
+        for ((requested, target) in listOf(
+            "gpt-5.4" to "gpt-5.6-terra",
+            "gpt-5.3-codex-spark" to "gpt-5.6-luna",
+            "gpt-6-astra" to "gpt-6-astra",
+        )) {
+            for (path in listOf("/v1/responses", "/v1/chat/completions")) {
+                for (stream in listOf(false, true)) {
+                    val input = if (path == "/v1/responses") {
+                        """"input":"hello""""
+                    } else {
+                        """"messages":[{"role":"user","content":"hello"}]"""
+                    }
+                    val response = ask(path = path, body = """{"model":"$requested",$input,"stream":$stream}""")
+
+                    assertEquals(HttpStatusCode.OK, response.status)
+                    assertEquals(target, upstreamModels.last())
+                    val body = response.bodyAsText()
+                    val models = if (stream) {
+                        body.lineSequence().filter { it.startsWith("data: ") && it != "data: [DONE]" }
+                            .map { json.parseToJsonElement(it.removePrefix("data: ")) as JsonObject }
+                            .mapNotNull { it.string("model") ?: it.obj("response")?.string("model") }
+                            .toList()
+                    } else {
+                        listOf((json.parseToJsonElement(body) as JsonObject).string("model"))
+                    }
+                    assertEquals(listOf(target), models.distinct())
+                }
+            }
+        }
+        assertEquals(12, upstreamModels.size)
+        assertEquals(12 * 18L, appModule.usage.consumed("sql-nastya"))
+    }
+
+    @Test
+    fun `chat model fallback uses the upgraded model when provider omits it`() = testApplication {
+        val engine = MockEngine { request ->
+            val payload = json.parseToJsonElement(request.body.toByteArray().decodeToString()) as JsonObject
+            assertEquals("gpt-5.6-terra", payload.string("model"))
+            respond(
+                content = ByteReadChannel(sseResponse(model = null)),
+                status = HttpStatusCode.OK,
+                headers = headersOf(HttpHeaders.ContentType, ContentType.Text.EventStream.toString()),
+            )
+        }
+        val appModule = applicationModule(engine = engine)
+        application { module(appModule) }
+
+        for (stream in listOf(false, true)) {
+            val response = ask(
+                path = "/v1/chat/completions",
+                body = """{"model":"gpt-5.4","messages":[{"role":"user","content":"hello"}],
+                    "stream":$stream,"stream_options":{"include_usage":true}}""",
+            )
+
+            assertEquals(HttpStatusCode.OK, response.status)
+            val body = response.bodyAsText()
+            val chunks = if (stream) {
+                body.lineSequence().filter { it.startsWith("data: ") && it != "data: [DONE]" }
+                    .map { json.parseToJsonElement(it.removePrefix("data: ")) as JsonObject }.toList()
+            } else {
+                listOf(json.parseToJsonElement(body) as JsonObject)
+            }
+            assertTrue(chunks.isNotEmpty())
+            assertTrue(chunks.all { it.string("model") == "gpt-5.6-terra" })
+        }
+    }
+
+    @Test
+    fun `rejects disallowed upgrade targets before contacting the provider`() = testApplication {
+        var upstreamCalls = 0
+        val directory = tempDirectory()
+        writeAuthFile(directory)
+        val appModule = ApplicationModule(
+            config = testConfig(directory, allowedModels = listOf("gpt-5.4")),
+            engine = MockEngine {
+                upstreamCalls += 1
+                error("disallowed upgrade must not reach the provider")
+            },
+        )
+        application { module(appModule) }
+
+        for (stream in listOf(false, true)) {
+            val responses = ask(body = """{"model":"gpt-5.4","input":"hello","stream":$stream}""")
+            val chat = ask(
+                path = "/v1/chat/completions",
+                body = """{"model":"gpt-5.4","messages":[{"role":"user","content":"hello"}],"stream":$stream}""",
+            )
+            for (response in listOf(responses, chat)) {
+                assertEquals(HttpStatusCode.BadRequest, response.status)
+                assertContains(response.bodyAsText(), "model_not_allowed")
+            }
+        }
+        assertEquals(0, upstreamCalls)
+    }
+
+    @Test
     fun `closes minute window after limit is exhausted`() = testApplication {
         val appModule = applicationModule(
             clients = listOf(ClientConfig(name = "sql-nastya", key = CLIENT_KEY, requestsPerMinute = 2)),
@@ -335,7 +446,10 @@ class ProxyTest {
         assertEquals(HttpStatusCode.OK, response.status)
         val body = json.parseToJsonElement(response.bodyAsText()) as JsonObject
         val models = body.array("data").orEmpty().filterIsInstance<JsonObject>()
-        assertEquals(DEFAULT_ALLOWED_MODELS, models.mapNotNull { it.string("id") })
+        assertEquals(
+            listOf("gpt-6-astra", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"),
+            models.mapNotNull { it.string("id") },
+        )
         assertTrue(models.all { it.long("created") == 0L })
     }
 
