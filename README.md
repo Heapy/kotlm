@@ -72,17 +72,25 @@ The proxy applies these changes to every request:
 - `store` is always `false`, so conversations are not retained by the provider;
 - Responses provider tools, references to previous responses (`previous_response_id`, `conversation`, `prompt`), and non-text input are rejected because their token cost cannot be determined from the request body;
 - Chat `content` arrays are accepted when every part has `type: "text"`; images, audio, files, tool calls, and tool messages are rejected explicitly. A `tools` declaration is accepted only when `tool_choice` is `"none"`, which guarantees that no function call is expected;
-- models outside `KOTLM_ALLOWED_MODELS` are rejected so a typo cannot consume the subscription;
+- known older model names are upgraded using the table below, then models outside `KOTLM_ALLOWED_MODELS` are rejected so a typo cannot consume the subscription;
 - a string in `input` is wrapped in a list because the OpenAI contract permits a string while Codex responds with `Input must be a list`;
 - `max_output_tokens` **is not sent to the provider** because the subscription responds with `Unsupported parameter`. The value is checked for validity and then discarded, so this parameter cannot limit response length.
 
-The default allowlist contains the ChatGPT Pro models that are not scheduled for retirement:
+The default allowlist is `gpt-6-astra`, `gpt-5.6-sol`, `gpt-5.6-terra`, and `gpt-5.6-luna`, checked against the [Codex model documentation](https://developers.openai.com/codex/models/) on September 19, 2026. Availability still depends on the subscription. GPT-5.4 and GPT-5.4 mini retired on August 31; [Codex Spark was removed on September 14](https://learn.chatgpt.com/docs/changelog#codex-2026-09-14-codex-spark-deprecation). GPT-5.5 is also excluded in preparation for its October 14 retirement.
 
-- `gpt-5.6-sol`, `gpt-5.6-terra`, and `gpt-5.6-luna`;
-- `gpt-5.5`;
-- `gpt-5.3-codex-spark`, a text-only research preview available to ChatGPT Pro users.
+Both request endpoints automatically rewrite these older model names before checking the allowlist:
 
-The `gpt-5.6` selector shown in Codex CLI examples is not a separate model in the current catalog, so the proxy uses the explicit `sol`, `terra`, and `luna` slugs. Override `KOTLM_ALLOWED_MODELS` when the subscription catalog changes.
+| Requested model | Model sent upstream |
+| --- | --- |
+| `gpt-5.2`, `gpt-5.3-codex`, `gpt-5.5` | `gpt-5.6-sol` |
+| `gpt-5.4` | `gpt-5.6-terra` |
+| `gpt-5.4-mini`, `gpt-5.3-codex-spark` | `gpt-5.6-luna` |
+
+The GPT-5.4, mini, and GPT-5.5 replacements follow OpenAI's migration guidance; the older coding models and Spark use the proxy's capability/speed tier choices. Current model names pass through unchanged, so clients request `gpt-6-astra` explicitly when they want Astra. Request parameters are preserved subject to the normalization rules above; returned model identifiers come from the provider, with Chat Completions falling back to the model sent upstream if the provider omits it.
+
+The replacement must be in `KOTLM_ALLOWED_MODELS`. Allowing only an old name does not authorize its replacement. Unknown names and unlisted dated variants receive no automatic upgrade. `/v1/models` lists the configured allowlist, not the upgrade aliases or a live subscription catalog.
+
+These are maintained mappings, not live model discovery or retries on provider errors. Update the mappings when models retire, and override `KOTLM_ALLOWED_MODELS` for the subscription's available models. Existing deployments with an explicit `.env` allowlist must add `gpt-6-astra` there to permit Astra requests. Use the explicit `gpt-5.6-sol`, `gpt-5.6-terra`, or `gpt-5.6-luna` slugs rather than the CLI's `gpt-5.6` selector.
 
 `stream: true` is supported, but events are returned together at the end rather than as they are generated. Responses clients receive provider Responses events; Chat Completions clients receive OpenAI-compatible `chat.completion.chunk` events followed by `data: [DONE]`. `stream_options.include_usage` adds the standard final usage chunk with an empty `choices` array.
 

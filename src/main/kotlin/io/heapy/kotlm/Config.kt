@@ -47,11 +47,10 @@ class ConfigurationException(message: String) : RuntimeException(message)
 private fun env(name: String): String? = System.getenv(name)?.trim()?.takeIf(String::isNotEmpty)
 
 internal val DEFAULT_ALLOWED_MODELS = listOf(
+    "gpt-6-astra",
     "gpt-5.6-sol",
     "gpt-5.6-terra",
     "gpt-5.6-luna",
-    "gpt-5.5",
-    "gpt-5.3-codex-spark",
 )
 
 private fun readAllowedModels(): List<String> =

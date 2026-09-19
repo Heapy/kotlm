@@ -85,13 +85,13 @@ fun sseResponse(
     text: String = "Done",
     inputTokens: Int = 11,
     outputTokens: Int = 7,
-    model: String = "gpt-5.6-sol",
+    model: String? = "gpt-5.6-sol",
 ): String {
     val response = buildJsonObject {
         put("id", "resp_1")
         put("object", "response")
         put("status", "completed")
-        put("model", model)
+        model?.let { put("model", it) }
         put(
             "output",
             kotlinx.serialization.json.buildJsonArray {

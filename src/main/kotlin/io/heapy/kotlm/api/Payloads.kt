@@ -27,6 +27,16 @@ class RequestException(
     val status: HttpStatusCode = HttpStatusCode.BadRequest,
 ) : RuntimeException(message)
 
+// Keep these explicit: model names alone do not establish equivalent capability or cost.
+private val MODEL_UPGRADES = mapOf(
+    "gpt-5.2" to "gpt-5.6-sol",
+    "gpt-5.3-codex" to "gpt-5.6-sol",
+    "gpt-5.3-codex-spark" to "gpt-5.6-luna",
+    "gpt-5.4" to "gpt-5.6-terra",
+    "gpt-5.4-mini" to "gpt-5.6-luna",
+    "gpt-5.5" to "gpt-5.6-sol",
+)
+
 private val REJECTED_INPUT_TYPES = setOf(
     "input_audio", "audio", "input_file", "file", "input_image", "image",
     "computer_call_output", "computer_screenshot", "item_reference", "reasoning",
@@ -61,8 +71,9 @@ fun normalizeResponsesPayload(
     payload: JsonObject,
     allowedModels: List<String>,
 ): JsonObject {
-    val model = payload.string("model")
+    val requestedModel = payload.string("model")
         ?: throw RequestException("model is required")
+    val model = MODEL_UPGRADES[requestedModel] ?: requestedModel
     if (allowedModels.isNotEmpty() && model !in allowedModels) {
         throw RequestException("Model $model is not allowed; allowed: ${allowedModels.joinToString()}", "model_not_allowed")
     }
@@ -92,6 +103,7 @@ fun normalizeResponsesPayload(
         // responds with "Unsupported parameter", so it is not sent upstream.
         .without("stream", "max_output_tokens")
         .with(
+            "model" to JsonPrimitive(model),
             "input" to normalizeInput(input),
             "store" to JsonPrimitive(false),
             "include" to include,
