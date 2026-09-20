@@ -334,6 +334,8 @@ class ProxyTest {
                 it.array("choices")?.filterIsInstance<JsonObject>()?.singleOrNull()?.obj("delta")?.string("content") == "Done"
             },
         )
+        val terminalChoice = chunks.dropLast(1).last().array("choices")?.filterIsInstance<JsonObject>()?.single()
+        assertEquals("stop", terminalChoice?.string("finish_reason"))
         val usage = chunks.last().obj("usage")
         assertTrue(chunks.last().array("choices").orEmpty().isEmpty())
         assertEquals(11, usage?.long("prompt_tokens"))

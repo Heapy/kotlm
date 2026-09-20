@@ -6,6 +6,7 @@ import io.heapy.kotlm.api.normalizeResponsesPayload
 import io.heapy.kotlm.api.responsesToChatCompletion
 import io.heapy.kotlm.api.responsesToChatCompletionStream
 import io.heapy.kotlm.codex.UpstreamProtocolException
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -239,6 +240,47 @@ class PayloadsTest {
         assertEquals(7, usage?.long("total_tokens"))
         assertEquals(2, usage?.obj("prompt_tokens_details")?.long("cached_tokens"))
         assertEquals(1, usage?.obj("completion_tokens_details")?.long("reasoning_tokens"))
+    }
+
+    @Test
+    fun `chat stream reports stop for completed responses`() {
+        assertStreamFinishReason("completed", "stop")
+    }
+
+    @Test
+    fun `chat stream reports length for incomplete responses`() {
+        assertStreamFinishReason("incomplete", "length")
+    }
+
+    private fun assertStreamFinishReason(status: String, expected: String) {
+        val response = payload(
+            """{"id":"resp_stream","status":"$status","usage":{"input_tokens":3,"output_tokens":4}}""",
+        )
+        for (includeUsage in listOf(false, true)) {
+            val stream = responsesToChatCompletionStream(
+                response = response,
+                requestedModel = "gpt-5.6-sol",
+                events = listOf(payload("""{"type":"response.output_text.delta","delta":"hello"}""")),
+                created = 1,
+                includeUsage = includeUsage,
+            )
+            val data = stream.lineSequence().filter { it.startsWith("data: ") }
+                .map { it.removePrefix("data: ") }.toList()
+            assertEquals("[DONE]", data.last())
+            val chunks = data.dropLast(1).map(::payload)
+            assertEquals(if (includeUsage) 4 else 3, chunks.size)
+            val choices = chunks.flatMap { it.array("choices").orEmpty().filterIsInstance<JsonObject>() }
+            assertEquals(3, choices.size)
+            assertEquals("assistant", choices.first().obj("delta")?.string("role"))
+            assertEquals("hello", choices[1].obj("delta")?.string("content"))
+            choices.dropLast(1).forEach { assertEquals(JsonNull, it["finish_reason"]) }
+            assertEquals(expected, choices.last().string("finish_reason"), "includeUsage=$includeUsage")
+            assertEquals(payload("{}"), choices.last().obj("delta"))
+            if (includeUsage) {
+                assertEquals(0, chunks.last().array("choices")?.size)
+                assertEquals(7, chunks.last().obj("usage")?.long("total_tokens"))
+            }
+        }
     }
 
     @Test

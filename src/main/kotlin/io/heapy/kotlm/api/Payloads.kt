@@ -335,7 +335,7 @@ fun responsesToChatCompletionStream(
                     buildJsonObject {
                         put("index", 0)
                         put("delta", delta)
-                        finishReason?.let { put("finish_reason", it) } ?: put("finish_reason", JsonNull)
+                        put("finish_reason", finishReason)
                     },
                 )
             },
