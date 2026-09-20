@@ -1,10 +1,10 @@
 # kotlm
 
-An OpenAI-compatible proxy in front of a Codex subscription. One service owns the authentication session, while projects such as kotomka, QA environments, sql-nastya, kotbot, and tgpt access it through a regular OpenAI client with their own keys.
+An OpenAI-compatible proxy in front of a Codex subscription. One service owns the authentication session, while projects such as kotomka, QA environments, sql-trainer, kotbot, and tgpt access it through a regular OpenAI client with their own keys.
 
 ```text
 kotbot ─┐
-tgpt   ─┤   Bearer <project key>    ┌ /v1/responses        ┌ OAuth tokens on disk
+tgpt   ─┤   Bearer <project key>     ┌ /v1/responses        ┌ OAuth tokens on disk
 qa     ─┼──────────────────────────▶ │ /v1/chat/completions │ refresh rotation
 sql    ─┘                            └ /v1/models           └ limits, budgets, metrics
                                               │
@@ -39,7 +39,7 @@ curl -sX POST -H "Authorization: Bearer $KOTLM_ADMIN_KEY" http://kotlm:8080/auth
 # {"id":"...","userCode":"ABCD-1234","verificationUrl":"https://auth.openai.com/codex/device", ...}
 ```
 
-Open the link on a phone, enter the code, and then poll for completion:
+Open the link, enter the code, and then poll for completion:
 
 ```bash
 curl -sX POST -H "Authorization: Bearer $KOTLM_ADMIN_KEY" \
@@ -99,7 +99,7 @@ These are maintained mappings, not live model discovery or retries on provider e
 ```json
 {
   "clients": [
-    { "name": "sql-nastya", "key": "…", "requestsPerMinute": 30, "dailyTokens": 300000 },
+    { "name": "sql-trainer", "key": "…", "requestsPerMinute": 30, "dailyTokens": 300000 },
     { "name": "kotbot", "key": "…", "requestsPerMinute": 60 }
   ]
 }
