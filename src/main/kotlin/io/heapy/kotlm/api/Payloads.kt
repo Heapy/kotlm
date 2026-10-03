@@ -29,12 +29,12 @@ class RequestException(
 
 // Keep these explicit: model names alone do not establish equivalent capability or cost.
 private val MODEL_UPGRADES = mapOf(
-    "gpt-5.2" to "gpt-5.6-sol",
-    "gpt-5.3-codex" to "gpt-5.6-sol",
-    "gpt-5.3-codex-spark" to "gpt-5.6-luna",
-    "gpt-5.4" to "gpt-5.6-terra",
-    "gpt-5.4-mini" to "gpt-5.6-luna",
-    "gpt-5.5" to "gpt-5.6-sol",
+    "gpt-5.2" to "gpt-6.1-sol",
+    "gpt-5.3-codex" to "gpt-6.1-sol",
+    "gpt-5.3-codex-spark" to "gpt-6-luna",
+    "gpt-5.4" to "gpt-6-sol",
+    "gpt-5.4-mini" to "gpt-6-luna",
+    "gpt-5.5" to "gpt-6.1-sol",
 )
 
 private val REJECTED_INPUT_TYPES = setOf(

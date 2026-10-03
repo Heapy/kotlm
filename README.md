@@ -76,21 +76,21 @@ The proxy applies these changes to every request:
 - a string in `input` is wrapped in a list because the OpenAI contract permits a string while Codex responds with `Input must be a list`;
 - `max_output_tokens` **is not sent to the provider** because the subscription responds with `Unsupported parameter`. The value is checked for validity and then discarded, so this parameter cannot limit response length.
 
-The default allowlist is `gpt-6-astra`, `gpt-5.6-sol`, `gpt-5.6-terra`, and `gpt-5.6-luna`, checked against the [Codex model documentation](https://developers.openai.com/codex/models/) on September 19, 2026. Availability still depends on the subscription. GPT-5.4 and GPT-5.4 mini retired on August 31; [Codex Spark was removed on September 14](https://learn.chatgpt.com/docs/changelog#codex-2026-09-14-codex-spark-deprecation). GPT-5.5 is also excluded in preparation for its October 14 retirement.
+The default allowlist is `gpt-6.1-sol`, `gpt-6-astra`, `gpt-6-sol`, `gpt-6-luna`, `gpt-5.6-sol`, `gpt-5.6-terra`, and `gpt-5.6-luna`, checked against the [Codex model documentation](https://learn.chatgpt.com/docs/models) and Codex CLI 0.160.0 model catalog on October 3, 2026. GPT-6.1 Sol is the latest recommended Sol model; GPT-6 Sol remains available, and the GPT-5.6 models remain available during rollout. Availability still depends on the subscription, client, and workspace settings. GPT-5.4 and GPT-5.4 mini retired on August 31; [Codex Spark was removed on September 14](https://learn.chatgpt.com/docs/changelog#codex-2026-09-14-codex-spark-deprecation). GPT-5.5 is excluded in preparation for its October 14 retirement.
 
 Both request endpoints automatically rewrite these older model names before checking the allowlist:
 
 | Requested model | Model sent upstream |
 | --- | --- |
-| `gpt-5.2`, `gpt-5.3-codex`, `gpt-5.5` | `gpt-5.6-sol` |
-| `gpt-5.4` | `gpt-5.6-terra` |
-| `gpt-5.4-mini`, `gpt-5.3-codex-spark` | `gpt-5.6-luna` |
+| `gpt-5.2`, `gpt-5.3-codex`, `gpt-5.5` | `gpt-6.1-sol` |
+| `gpt-5.4` | `gpt-6-sol` |
+| `gpt-5.4-mini`, `gpt-5.3-codex-spark` | `gpt-6-luna` |
 
-The GPT-5.4, mini, and GPT-5.5 replacements follow OpenAI's migration guidance; the older coding models and Spark use the proxy's capability/speed tier choices. Current model names pass through unchanged, so clients request `gpt-6-astra` explicitly when they want Astra. Request parameters are preserved subject to the normalization rules above; returned model identifiers come from the provider, with Chat Completions falling back to the model sent upstream if the provider omits it.
+The GPT-5.4 and mini replacements follow OpenAI's migration guidance. The GPT-5.5 replacement follows the Codex CLI catalog's GPT-6.1 Sol upgrade recommendation; the model documentation also names GPT-6 Sol as a plan-dependent replacement. The older coding models and Spark use the proxy's capability/speed tier choices. Current model names, including the GPT-5.6 models, pass through unchanged, so clients request `gpt-6-astra` explicitly when they want Astra. Request parameters are preserved subject to the normalization rules above; returned model identifiers come from the provider, with Chat Completions falling back to the model sent upstream if the provider omits it.
 
 The replacement must be in `KOTLM_ALLOWED_MODELS`. Allowing only an old name does not authorize its replacement. Unknown names and unlisted dated variants receive no automatic upgrade. `/v1/models` lists the configured allowlist, not the upgrade aliases or a live subscription catalog.
 
-These are maintained mappings, not live model discovery or retries on provider errors. Update the mappings when models retire, and override `KOTLM_ALLOWED_MODELS` for the subscription's available models. Existing deployments with an explicit `.env` allowlist must add `gpt-6-astra` there to permit Astra requests. Use the explicit `gpt-5.6-sol`, `gpt-5.6-terra`, or `gpt-5.6-luna` slugs rather than the CLI's `gpt-5.6` selector.
+These are maintained mappings, not live model discovery or retries on provider errors. Update the mappings when models retire, and override `KOTLM_ALLOWED_MODELS` for the subscription's available models. Existing deployments with an explicit `.env` allowlist must add `gpt-6.1-sol`, `gpt-6-sol`, and `gpt-6-luna` to permit these requests and legacy aliases that now target them. An explicit allowlist containing only GPT-5.6 models will reject those legacy aliases; clients can still request an allowed GPT-5.6 model directly. Use the explicit model slugs listed above rather than family selectors such as the CLI's `gpt-5.6`.
 
 `stream: true` is supported, but events are returned together at the end rather than as they are generated. Responses clients receive provider Responses events; Chat Completions clients receive OpenAI-compatible `chat.completion.chunk` events followed by `data: [DONE]`. `stream_options.include_usage` adds the standard final usage chunk with an empty `choices` array.
 

@@ -63,12 +63,12 @@ class PayloadsTest {
     @Test
     fun `upgrades known older models to their current tiers`() {
         val upgrades = mapOf(
-            "gpt-5.2" to "gpt-5.6-sol",
-            "gpt-5.3-codex" to "gpt-5.6-sol",
-            "gpt-5.3-codex-spark" to "gpt-5.6-luna",
-            "gpt-5.4" to "gpt-5.6-terra",
-            "gpt-5.4-mini" to "gpt-5.6-luna",
-            "gpt-5.5" to "gpt-5.6-sol",
+            "gpt-5.2" to "gpt-6.1-sol",
+            "gpt-5.3-codex" to "gpt-6.1-sol",
+            "gpt-5.3-codex-spark" to "gpt-6-luna",
+            "gpt-5.4" to "gpt-6-sol",
+            "gpt-5.4-mini" to "gpt-6-luna",
+            "gpt-5.5" to "gpt-6.1-sol",
         )
         for ((requested, target) in upgrades) {
             val body = payload(
@@ -87,7 +87,10 @@ class PayloadsTest {
 
     @Test
     fun `passes current models through unchanged`() {
-        for (model in listOf("gpt-6-astra", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna")) {
+        for (model in listOf(
+            "gpt-6.1-sol", "gpt-6-astra", "gpt-6-sol", "gpt-6-luna",
+            "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna",
+        )) {
             val result = normalizeResponsesPayload(payload("""{"model":"$model","input":"hello"}"""), DEFAULT_ALLOWED_MODELS)
 
             assertEquals(model, result.string("model"))
@@ -96,7 +99,7 @@ class PayloadsTest {
 
     @Test
     fun `requires the upgrade target to be allowed even when the old model is allowed`() {
-        for (allowed in listOf(listOf("gpt-5.4"), listOf("gpt-6-astra"))) {
+        for (allowed in listOf(listOf("gpt-5.4"), listOf("gpt-5.6-terra"), listOf("gpt-6-astra"))) {
             val error = assertFailsWith<RequestException> {
                 normalizeResponsesPayload(payload("""{"model":"gpt-5.4","input":"hello"}"""), allowed)
             }
