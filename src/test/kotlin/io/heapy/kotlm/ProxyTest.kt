@@ -145,7 +145,7 @@ class ProxyTest {
     }
 
     @Test
-    fun `both endpoints forward upgraded models and report them in JSON and streams`() = testApplication {
+    fun `both endpoints forward current and upgraded models and report them in JSON and streams`() = testApplication {
         val upstreamModels = mutableListOf<String>()
         val engine = MockEngine { request ->
             val payload = json.parseToJsonElement(request.body.toByteArray().decodeToString()) as JsonObject
@@ -161,9 +161,19 @@ class ProxyTest {
         application { module(appModule) }
 
         for ((requested, target) in listOf(
-            "gpt-5.4" to "gpt-5.6-terra",
-            "gpt-5.3-codex-spark" to "gpt-5.6-luna",
+            "gpt-5.2" to "gpt-6.1-sol",
+            "gpt-5.3-codex" to "gpt-6.1-sol",
+            "gpt-5.3-codex-spark" to "gpt-6-luna",
+            "gpt-5.4" to "gpt-6-sol",
+            "gpt-5.4-mini" to "gpt-6-luna",
+            "gpt-5.5" to "gpt-6.1-sol",
+            "gpt-6.1-sol" to "gpt-6.1-sol",
             "gpt-6-astra" to "gpt-6-astra",
+            "gpt-6-sol" to "gpt-6-sol",
+            "gpt-6-luna" to "gpt-6-luna",
+            "gpt-5.6-sol" to "gpt-5.6-sol",
+            "gpt-5.6-terra" to "gpt-5.6-terra",
+            "gpt-5.6-luna" to "gpt-5.6-luna",
         )) {
             for (path in listOf("/v1/responses", "/v1/chat/completions")) {
                 for (stream in listOf(false, true)) {
@@ -189,15 +199,15 @@ class ProxyTest {
                 }
             }
         }
-        assertEquals(12, upstreamModels.size)
-        assertEquals(12 * 18L, appModule.usage.consumed("sql-nastya"))
+        assertEquals(52, upstreamModels.size)
+        assertEquals(52 * 18L, appModule.usage.consumed("sql-nastya"))
     }
 
     @Test
     fun `chat model fallback uses the upgraded model when provider omits it`() = testApplication {
         val engine = MockEngine { request ->
             val payload = json.parseToJsonElement(request.body.toByteArray().decodeToString()) as JsonObject
-            assertEquals("gpt-5.6-terra", payload.string("model"))
+            assertEquals("gpt-6-sol", payload.string("model"))
             respond(
                 content = ByteReadChannel(sseResponse(model = null)),
                 status = HttpStatusCode.OK,
@@ -223,7 +233,7 @@ class ProxyTest {
                 listOf(json.parseToJsonElement(body) as JsonObject)
             }
             assertTrue(chunks.isNotEmpty())
-            assertTrue(chunks.all { it.string("model") == "gpt-5.6-terra" })
+            assertTrue(chunks.all { it.string("model") == "gpt-6-sol" })
         }
     }
 
@@ -449,7 +459,10 @@ class ProxyTest {
         val body = json.parseToJsonElement(response.bodyAsText()) as JsonObject
         val models = body.array("data").orEmpty().filterIsInstance<JsonObject>()
         assertEquals(
-            listOf("gpt-6-astra", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"),
+            listOf(
+                "gpt-6.1-sol", "gpt-6-astra", "gpt-6-sol", "gpt-6-luna",
+                "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna",
+            ),
             models.mapNotNull { it.string("id") },
         )
         assertTrue(models.all { it.long("created") == 0L })
